@@ -77,7 +77,11 @@ func (s *testWorkerStubs) addBlock(ccNextRound basics.Round) {
 	hdr.Round = s.latest
 	hdr.CurrentProtocol = protocol.ConsensusFuture
 
-	var ccBasic bookkeeping.CompactCertState
+	var ccBasic = bookkeeping.CompactCertState{
+		CompactCertVoters:      make([]byte, compactcert.HashSize),
+		CompactCertVotersTotal: basics.MicroAlgos{},
+		CompactCertNextRound:   0,
+	}
 	ccBasic.CompactCertVotersTotal.Raw = uint64(s.totalWeight)
 
 	if hdr.Round > 0 {
@@ -131,13 +135,13 @@ func (s *testWorkerStubs) CompactCertVoters(r basics.Round) (*ledgercore.VotersF
 	for i, k := range s.keysForVoters {
 		voters.AddrToPos[k.Parent] = uint64(i)
 		voters.Participants = append(voters.Participants, basics.Participant{
-			PK:          k.Voting.OneTimeSignatureVerifier,
-			Weight:      1,
-			KeyDilution: config.Consensus[protocol.ConsensusFuture].DefaultKeyDilution,
+			PK:         *k.BlockProof.GetVerifier(),
+			Weight:     1,
+			FirstValid: uint64(k.FirstValid),
 		})
 	}
 
-	tree, err := merklearray.Build(voters.Participants)
+	tree, err := merklearray.Build(voters.Participants, crypto.HashFactory{HashType: crypto.Sha512_256})
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +210,7 @@ func newPartKey(t testing.TB, parent basics.Address) account.Participation {
 	partDB, err := db.MakeAccessor(fn, false, true)
 	require.NoError(t, err)
 
-	part, err := account.FillDBWithParticipationKeys(partDB, parent, 0, 1024*1024, config.Consensus[protocol.ConsensusFuture].DefaultKeyDilution)
+	part, err := account.FillDBWithParticipationKeys(partDB, parent, 0, 1024, config.Consensus[protocol.ConsensusFuture].DefaultKeyDilution)
 	require.NoError(t, err)
 	part.Close()
 	return part.Participation
@@ -257,10 +261,11 @@ func TestWorkerAllSigs(t *testing.T) {
 			require.False(t, overflowed)
 
 			ccparams := compactcert.Params{
-				Msg:          signedHdr,
-				ProvenWeight: provenWeight,
-				SigRound:     basics.Round(signedHdr.Round + 1),
-				SecKQ:        proto.CompactCertSecKQ,
+				Msg:               signedHdr,
+				ProvenWeight:      provenWeight,
+				SigRound:          basics.Round(signedHdr.Round),
+				SecKQ:             proto.CompactCertSecKQ,
+				CompactCertRounds: proto.CompactCertRounds,
 			}
 
 			voters, err := s.CompactCertVoters(tx.Txn.CertRound - basics.Round(proto.CompactCertRounds) - basics.Round(proto.CompactCertVotersLookback))
@@ -318,10 +323,11 @@ func TestWorkerPartialSigs(t *testing.T) {
 	require.False(t, overflowed)
 
 	ccparams := compactcert.Params{
-		Msg:          signedHdr,
-		ProvenWeight: provenWeight,
-		SigRound:     basics.Round(signedHdr.Round + 1),
-		SecKQ:        proto.CompactCertSecKQ,
+		Msg:               signedHdr,
+		ProvenWeight:      provenWeight,
+		SigRound:          basics.Round(signedHdr.Round),
+		SecKQ:             proto.CompactCertSecKQ,
+		CompactCertRounds: proto.CompactCertRounds,
 	}
 
 	voters, err := s.CompactCertVoters(tx.Txn.CertRound - basics.Round(proto.CompactCertRounds) - basics.Round(proto.CompactCertVotersLookback))
