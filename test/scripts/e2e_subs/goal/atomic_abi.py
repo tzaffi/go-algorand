@@ -233,8 +233,7 @@ class AtomicABI:
             lease: bytes = None,
             rekey_to: str = None,
         ):
-            abi = self.clone()
-            abi.add_method_call(
+            self.add_method_call(
                 abi_meth,
                 method_args=args,
                 sp=sp,
@@ -243,7 +242,7 @@ class AtomicABI:
                 lease=lease,
                 rekey_to=rekey_to,
             )
-            _, s = abi.execute_atomic_group(wait_rounds=wait_rounds)
+            _, s = self.execute_atomic_group(wait_rounds=wait_rounds)
             return s[0].result.return_value
 
         return func_add_method_call, func_run_now
@@ -282,6 +281,8 @@ class AtomicABI:
         lease: bytes = None,
         rekey_to: str = None,
     ) -> "AtomicABI":
+        assert self.execution_results is None, self.CALL_TWICE_ERROR
+
         if not sp:
             sp = self.get_suggested_params()
 

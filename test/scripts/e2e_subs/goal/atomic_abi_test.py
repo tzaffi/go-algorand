@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import algosdk.atomic_transaction_composer as atc
 import algosdk.abi as abi
+import algosdk.future.transaction as txn
 
 from atomic_abi import AtomicABI
 
@@ -147,12 +148,45 @@ def test_dynamic_methods():
         assert getattr(abi, run_now_method_name, None)
 
 
-def make_atc_response(methods: List[abi.method.Method]):
+# ZERO_ADDR = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ"
+
+
+def zero_val(val: abi.Returns) -> object:
+    return zero(val.type)
+
+
+def zero(t: abi.ABIType) -> object:
+    if isinstance(t, abi.UintType):
+        return 0
+
+    if isinstance(t, abi.StringType):
+        return ""
+
+    if isinstance(t, abi.TupleType):
+        return tuple(map(zero, t.child_types))
+
+    if isinstance(t, abi.ArrayDynamicType):
+        return list(map(zero, t.child_types))
+
+    # if t == "pay":
+    #     pymnt = txn.PaymentTxn(ZERO_ADDR, Mock(), ZERO_ADDR, 0)
+    #     signer = atc.AccountTransactionSigner("")
+    #     return atc.TransactionWithSigner(pymnt, signer)
+
+    # if t.endswith("[]"):
+    #     return list()
+
+    raise Exception(f"unhandled type <{t}>")
+
+
+def make_atc_response(*methods: List[abi.method.Method]):
     confirmed_round = 1337
     tx_ids = list(map(lambda m: f"txn for {m.name}", methods))
     method_results = []
     for i, meth in enumerate(methods):
-        method_results.append(atc.ABIResult(tx_ids[i], None, Mock(), None))
+        method_results.append(
+            atc.ABIResult(tx_ids[i], None, zero_val(meth.returns), None)
+        )
 
     atc_response = atc.AtomicTransactionResponse(
         confirmed_round=confirmed_round, tx_ids=tx_ids, results=method_results
@@ -164,24 +198,83 @@ def make_atc_response(methods: List[abi.method.Method]):
 def test_run_methods():
     abi = test_init(init_only=True)
     with patch.object(atc.AtomicTransactionComposer, "execute") as atc_execute:
-        for m, meth in abi.atomic_transaction_composer.method_dict:
-            print(m, meth)
+        atc_execute.return_value = make_atc_response(abi._meth_dict["add"]["abi_meth"])
+
         z = abi.run_add(2, 3)
+    assert z == 0
 
-        atc_execute.return_value = make_atc_response(
-            abi.atomic_transaction_composer.method_dict["add"]
-        )
+    assert len(abi.execution_results.abi_results) == 1
+    assert abi.execution_results.abi_results[0].return_value == 0
+
+    assert len(abi.execution_results.tx_ids) == 1
+    assert abi.execution_results.tx_ids[0] == "txn for add"
+
+    assert len(abi.execution_summaries) == 1
+    assert abi.execution_summaries[0].args == (2, 3)
+    assert abi.execution_summaries[0].result.return_value == 0
 
 
-test_fixture()
+def test_execute_atomic_group():
+    abi = test_init(init_only=True)
+    mnames = [
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "qrem",
+        "reverse",
+        # "txntest",
+        "concat_strings",
+        "manyargs",
+        "_optIn",
+        "_closeOut",
+    ]
+    responses = [abi._meth_dict[m]["abi_meth"] for m in mnames]
 
-# sub
-# mul
-# div
-# qrem
-# reverse
-# txntest
-# concat_strings
-# manyargs
-# _optIn
-# _closeOut
+    with patch.object(atc.AtomicTransactionComposer, "execute") as atc_execute:
+        atc_execute.return_value = make_atc_response(*responses)
+        abi.next_abi_call_add(1, 2)
+        abi.next_abi_call_sub(2, 1)
+        abi.next_abi_call_mul(4, 5)
+        abi.next_abi_call_div(12, 2)
+        abi.next_abi_call_qrem(43, 5)
+        abi.next_abi_call_reverse("allo")
+        # abi.next_abi_call_txntest()
+        abi.next_abi_call_concat_strings(["by", "bye"])
+        abi.next_abi_call_manyargs(*range(20))
+        abi.next_abi_call__optIn(0)
+        abi.next_abi_call__closeOut(0)
+
+        z = abi.execute_atomic_group()
+
+    assert z == 0
+
+    assert len(abi.execution_results.abi_results) == 1
+    assert abi.execution_results.abi_results[0].return_value == 0
+
+    assert len(abi.execution_results.tx_ids) == 1
+    assert abi.execution_results.tx_ids[0] == "txn for add"
+
+    assert len(abi.execution_summaries) == 1
+    assert abi.execution_summaries[0].args == (2, 3)
+    assert abi.execution_summaries[0].result.return_value == 0
+
+
+# OOPS - OVERKILL - BUT IT WAS FUN
+
+
+# def make_helper_abi():
+#     """
+#     This one has all the methods, to help with mocking
+#     """
+#     abi = test_init(init_only=True)
+#     for meth in contract["methods"]:
+#         name = meth["name"]
+#         abi_meth = abi._meth_dict[name]["abi_meth"]
+#         call_args = list(map(zero_val, meth["args"]))
+#         abi.add_method_call(abi_meth, method_args=call_args)
+#     return abi
+
+
+# test_run_methods()
+test_execute_atomic_group()
