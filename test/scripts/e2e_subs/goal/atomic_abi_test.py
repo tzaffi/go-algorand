@@ -7,7 +7,7 @@ import algosdk.atomic_transaction_composer as atc
 import algosdk.abi as abi
 import algosdk.future.transaction as txn
 
-from atomic_abi import AtomicABI
+from .atomic_abi import AtomicABI
 
 
 contract = {
@@ -148,7 +148,7 @@ def test_dynamic_methods():
         assert getattr(abi, run_now_method_name, None)
 
 
-# ZERO_ADDR = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ"
+ZERO_ADDR = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ"
 
 
 def zero_val(val: abi.Returns) -> object:
@@ -223,7 +223,7 @@ def test_execute_atomic_group():
         "div",
         "qrem",
         "reverse",
-        # "txntest",
+        "txntest",
         "concat_strings",
         "manyargs",
         "_optIn",
@@ -239,42 +239,108 @@ def test_execute_atomic_group():
         abi.next_abi_call_div(12, 2)
         abi.next_abi_call_qrem(43, 5)
         abi.next_abi_call_reverse("allo")
-        # abi.next_abi_call_txntest()
+
+        pymnt = txn.PaymentTxn(ZERO_ADDR, Mock(), ZERO_ADDR, 0)
+        signed_pymnt = abi.get_txn_with_signer(pymnt)
+        abi.next_abi_call_txntest(42, signed_pymnt, 24)
+
         abi.next_abi_call_concat_strings(["by", "bye"])
         abi.next_abi_call_manyargs(*range(20))
         abi.next_abi_call__optIn(0)
         abi.next_abi_call__closeOut(0)
 
-        z = abi.execute_atomic_group()
+        y = abi.execute_atomic_group()
 
-    assert z == 0
+    num_calls = 11
 
-    assert len(abi.execution_results.abi_results) == 1
-    assert abi.execution_results.abi_results[0].return_value == 0
+    assert len(y) == num_calls
+    assert len(abi.execution_results.abi_results) == num_calls
+    assert len(abi.execution_results.tx_ids) == num_calls
+    assert len(abi.execution_summaries) == num_calls
 
-    assert len(abi.execution_results.tx_ids) == 1
-    assert abi.execution_results.tx_ids[0] == "txn for add"
+    for i, summary in enumerate(abi.execution_summaries):
+        abi_result = abi.execution_results.abi_results[i]
+        faux_txn = abi.execution_results.tx_ids[i]
 
-    assert len(abi.execution_summaries) == 1
-    assert abi.execution_summaries[0].args == (2, 3)
-    assert abi.execution_summaries[0].result.return_value == 0
+        assert faux_txn == abi_result.tx_id
+        assert summary.method.name in faux_txn
+        assert summary.result == abi_result
+        assert y[i] == abi_result.return_value
 
+    # how'd we do with add() ?
+    add_idx = 0
+    add_exp_result = 0
+    assert abi.execution_summaries[add_idx].args == (1, 2)
+    assert abi.execution_summaries[add_idx].result.return_value == add_exp_result
+    assert abi.execution_results.tx_ids[add_idx] == "txn for add"
+    assert abi.execution_results.abi_results[add_idx].return_value == add_exp_result
+    assert y[add_idx] == add_exp_result
 
-# OOPS - OVERKILL - BUT IT WAS FUN
+    # how'd we do with qrem() ?
+    qrem_idx = 4
+    qrem_exp_result = (0, 0)
+    assert abi.execution_summaries[qrem_idx].args == (43, 5)
+    assert abi.execution_summaries[qrem_idx].result.return_value == qrem_exp_result
+    assert abi.execution_results.tx_ids[qrem_idx] == "txn for qrem"
+    assert abi.execution_results.abi_results[qrem_idx].return_value == qrem_exp_result
+    assert y[qrem_idx] == qrem_exp_result
 
+    # how'd we do with reverse() ?
+    reverse_idx = 5
+    reverse_exp_result = ""
+    assert abi.execution_summaries[reverse_idx].args == ("allo",)
+    assert (
+        abi.execution_summaries[reverse_idx].result.return_value == reverse_exp_result
+    )
+    assert abi.execution_results.tx_ids[reverse_idx] == "txn for reverse"
+    assert (
+        abi.execution_results.abi_results[reverse_idx].return_value
+        == reverse_exp_result
+    )
+    assert y[reverse_idx] == reverse_exp_result
 
-# def make_helper_abi():
-#     """
-#     This one has all the methods, to help with mocking
-#     """
-#     abi = test_init(init_only=True)
-#     for meth in contract["methods"]:
-#         name = meth["name"]
-#         abi_meth = abi._meth_dict[name]["abi_meth"]
-#         call_args = list(map(zero_val, meth["args"]))
-#         abi.add_method_call(abi_meth, method_args=call_args)
-#     return abi
+    # how'd we do with txntest() ?
+    txntest_idx = 6
+    txntest_exp_result = 0
+    assert abi.execution_summaries[txntest_idx].args == (42, signed_pymnt, 24)
 
+    assert (
+        abi.execution_summaries[txntest_idx].result.return_value == txntest_exp_result
+    )
+    assert abi.execution_results.tx_ids[txntest_idx] == "txn for txntest"
+    assert (
+        abi.execution_results.abi_results[txntest_idx].return_value
+        == txntest_exp_result
+    )
+    assert y[txntest_idx] == txntest_exp_result
 
-# test_run_methods()
-test_execute_atomic_group()
+    # how'd we do with concat_strings() ?
+    concat_strings_idx = 7
+    concat_strings_exp_result = ""
+    assert abi.execution_summaries[concat_strings_idx].args == (["by", "bye"],)
+
+    assert (
+        abi.execution_summaries[concat_strings_idx].result.return_value
+        == concat_strings_exp_result
+    )
+    assert abi.execution_results.tx_ids[concat_strings_idx] == "txn for concat_strings"
+    assert (
+        abi.execution_results.abi_results[concat_strings_idx].return_value
+        == concat_strings_exp_result
+    )
+    assert y[concat_strings_idx] == concat_strings_exp_result
+
+    # how'd we do with manyargs() ?
+    manyargs_idx = 8
+    manyargs_exp_result = 0
+    assert abi.execution_summaries[manyargs_idx].args == tuple(range(20))
+
+    assert (
+        abi.execution_summaries[manyargs_idx].result.return_value == manyargs_exp_result
+    )
+    assert abi.execution_results.tx_ids[manyargs_idx] == "txn for manyargs"
+    assert (
+        abi.execution_results.abi_results[manyargs_idx].return_value
+        == manyargs_exp_result
+    )
+    assert y[manyargs_idx] == manyargs_exp_result

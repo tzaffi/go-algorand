@@ -139,16 +139,14 @@ class AtomicABI:
             self, caller_acct=caller_acct, new_suggested_params=new_suggested_params
         )
 
-    def execute_atomic_group(
-        self, wait_rounds: int = 5
-    ) -> Tuple[atc.AtomicTransactionResponse, List["MethodCallSummary"]]:
+    def execute_atomic_group(self, wait_rounds: int = 5) -> list:
         assert self.execution_results is None, self.CALL_TWICE_ERROR
 
         self.execution_results = self.atomic_transaction_composer.execute(
             self.goal.algod, wait_rounds
         )
         self.execution_summaries = self._build_summaries()
-        return self.execution_results, self.execution_summaries
+        return list(map(lambda y: y.result.return_value, self.execution_summaries))
 
     def execute_singleton_group(
         self,
@@ -160,7 +158,7 @@ class AtomicABI:
         note: bytes = None,
         lease: bytes = None,
         rekey_to: str = None,
-    ) -> Tuple[atc.AtomicTransactionResponse, "MethodCallSummary"]:
+    ) -> object:
         """
         Note: the run_XYZ() dynamically generated methods are recommended over execute_singleton_group()
         in most situation because they clone() the AtomicABI object first before execution.
@@ -179,8 +177,7 @@ class AtomicABI:
             lease=lease,
             rekey_to=rekey_to,
         )
-        _, s = self.execute_atomic_group(wait_rounds=wait_rounds)
-        return s[0].result.return_value
+        return self.execute_atomic_group(wait_rounds=wait_rounds)[0]
 
     def dump_selectors(self) -> str:
         return json.dumps(self.sig2selector, indent=4, sort_keys=True)
@@ -242,8 +239,7 @@ class AtomicABI:
                 lease=lease,
                 rekey_to=rekey_to,
             )
-            _, s = self.execute_atomic_group(wait_rounds=wait_rounds)
-            return s[0].result.return_value
+            return self.execute_atomic_group(wait_rounds=wait_rounds)[0]
 
         return func_add_method_call, func_run_now
 
