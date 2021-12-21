@@ -14,22 +14,21 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with go-algorand.  If not, see <https://www.gnu.org/licenses/>.
 
-package ledger
+package internal_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/algorand/go-algorand/agreement"
 	"github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/data/bookkeeping"
-	"github.com/algorand/go-algorand/data/transactions"
 	"github.com/algorand/go-algorand/data/txntest"
-	"github.com/algorand/go-algorand/ledger/internal"
+	"github.com/algorand/go-algorand/ledger"
 	"github.com/algorand/go-algorand/ledger/ledgercore"
 	ledgertesting "github.com/algorand/go-algorand/ledger/testing"
 	"github.com/algorand/go-algorand/logging"
@@ -42,159 +41,20 @@ import (
 // then approves, if the source avoids panicing and leaves the stack
 // empty.
 func main(source string) string {
-	return fmt.Sprintf(`txn ApplicationID
+	return strings.Replace(fmt.Sprintf(`txn ApplicationID
             bz end
             %s
-       end: int 1`, source)
-}
-
-// newTestLedger creates a in memory Ledger that is as realistic as
-// possible.  It has Rewards and FeeSink properly configured.
-func newTestLedger(t testing.TB, balances bookkeeping.GenesisBalances) *Ledger {
-	var genHash crypto.Digest
-	crypto.RandBytes(genHash[:])
-	genBlock, err := bookkeeping.MakeGenesisBlock(protocol.ConsensusFuture, balances, "test", genHash)
-	require.NoError(t, err)
-	require.False(t, genBlock.FeeSink.IsZero())
-	require.False(t, genBlock.RewardsPool.IsZero())
-	dbName := fmt.Sprintf("%s.%d", t.Name(), crypto.RandUint64())
-	cfg := config.GetDefaultLocal()
-	cfg.Archival = true
-	l, err := OpenLedger(logging.Base(), dbName, true, ledgercore.InitState{
-		Block:       genBlock,
-		Accounts:    balances.Balances,
-		GenesisHash: genHash,
-	}, cfg)
-	require.NoError(t, err)
-	return l
-}
-
-// nextBlock begins evaluation of a new block, after ledger creation or endBlock()
-func (ledger *Ledger) nextBlock(t testing.TB) *internal.BlockEvaluator {
-	rnd := ledger.Latest()
-	hdr, err := ledger.BlockHdr(rnd)
-	require.NoError(t, err)
-
-	nextHdr := bookkeeping.MakeBlock(hdr).BlockHeader
-	eval, err := ledger.StartEvaluator(nextHdr, 0, 0)
-	require.NoError(t, err)
-	return eval
-}
-
-// endBlock completes the block being created, returns the ValidatedBlock for inspection
-func (ledger *Ledger) endBlock(t testing.TB, eval testingEvaluator) *ledgercore.ValidatedBlock {
-	validatedBlock, err := eval.BlockEvaluator.GenerateBlock()
-	require.NoError(t, err)
-	err = ledger.AddValidatedBlock(*validatedBlock, agreement.Certificate{})
-	require.NoError(t, err)
-	return validatedBlock
-}
-
-// lookup gets the current accountdata for an address
-func (ledger *Ledger) lookup(t testing.TB, addr basics.Address) basics.AccountData {
-	rnd := ledger.Latest()
-	ad, err := ledger.Lookup(rnd, addr)
-	require.NoError(t, err)
-	return ad
-}
-
-// micros gets the current microAlgo balance for an address
-func (ledger *Ledger) micros(t testing.TB, addr basics.Address) uint64 {
-	return ledger.lookup(t, addr).MicroAlgos.Raw
-}
-
-// asa gets the current balance and optin status for some asa for an address
-func (ledger *Ledger) asa(t testing.TB, addr basics.Address, asset basics.AssetIndex) (uint64, bool) {
-	if holding, ok := ledger.lookup(t, addr).Assets[asset]; ok {
-		return holding.Amount, true
-	}
-	return 0, false
-}
-
-// asaParams gets the asset params for a given asa index
-func (ledger *Ledger) asaParams(t testing.TB, asset basics.AssetIndex) (basics.AssetParams, error) {
-	creator, ok, err := ledger.GetCreator(basics.CreatableIndex(asset), basics.AssetCreatable)
-	if err != nil {
-		return basics.AssetParams{}, err
-	}
-	if !ok {
-		return basics.AssetParams{}, fmt.Errorf("no asset (%d)", asset)
-	}
-	if params, ok := ledger.lookup(t, creator).AssetParams[asset]; ok {
-		return params, nil
-	}
-	return basics.AssetParams{}, fmt.Errorf("bad lookup (%d)", asset)
-}
-
-type testingEvaluator struct {
-	*internal.BlockEvaluator
-	ledger *Ledger
-}
-
-func (eval *testingEvaluator) fillDefaults(txn *txntest.Txn) {
-	if txn.GenesisHash.IsZero() {
-		txn.GenesisHash = eval.ledger.GenesisHash()
-	}
-	if txn.FirstValid == 0 {
-		txn.FirstValid = eval.Round()
-	}
-	txn.FillDefaults(eval.ledger.genesisProto)
-}
-
-func (eval *testingEvaluator) txn(t testing.TB, txn *txntest.Txn, problem ...string) {
-	t.Helper()
-	eval.fillDefaults(txn)
-	stxn := txn.SignedTxn()
-	err := eval.TestTransactionGroup([]transactions.SignedTxn{stxn})
-	if err != nil {
-		if len(problem) == 1 {
-			require.Contains(t, err.Error(), problem[0])
-		} else {
-			require.NoError(t, err) // Will obviously fail
-		}
-		return
-	}
-	err = eval.Transaction(stxn, transactions.ApplyData{})
-	if err != nil {
-		if len(problem) == 1 {
-			require.Contains(t, err.Error(), problem[0])
-		} else {
-			require.NoError(t, err) // Will obviously fail
-		}
-		return
-	}
-	require.Len(t, problem, 0)
-}
-
-func (eval *testingEvaluator) txns(t testing.TB, txns ...*txntest.Txn) {
-	t.Helper()
-	for _, txn := range txns {
-		eval.txn(t, txn)
-	}
-}
-
-func (eval *testingEvaluator) txgroup(t testing.TB, txns ...*txntest.Txn) error {
-	t.Helper()
-	for _, txn := range txns {
-		eval.fillDefaults(txn)
-	}
-	txgroup := txntest.SignedTxns(txns...)
-
-	err := eval.TestTransactionGroup(txgroup)
-	if err != nil {
-		return err
-	}
-
-	err = eval.TransactionGroup(transactions.WrapSignedTxnsWithAD(txgroup))
-	return err
+       end: int 1`, source), ";", "\n", -1)
 }
 
 // TestPayAction ensures a pay in teal affects balances
 func TestPayAction(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
-	genBalances, addrs, _ := ledgertesting.NewTestGenesis()
-	l := newTestLedger(t, genBalances)
+	genesisInitState, addrs, _ := ledgertesting.Genesis(10)
+
+	l, err := ledger.OpenLedger(logging.TestingLog(t), "", true, genesisInitState, config.GetDefaultLocal())
+	require.NoError(t, err)
 	defer l.Close()
 
 	create := txntest.Txn{
@@ -227,49 +87,44 @@ func TestPayAction(t *testing.T) {
 		Accounts:      []basics.Address{addrs[1]}, // pay self
 	}
 
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &create, &fund, &payout1)
-	vb := l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &create, &fund, &payout1)
+	vb := endBlock(t, l, eval)
 
 	// AD contains expected appIndex
 	require.Equal(t, ai, vb.Block().Payset[0].ApplyData.ApplicationID)
 
-	ad0 := l.micros(t, addrs[0])
-	ad1 := l.micros(t, addrs[1])
-	app := l.micros(t, ai.Address())
+	ad0 := micros(t, l, addrs[0])
+	ad1 := micros(t, l, addrs[1])
+	app := micros(t, l, ai.Address())
 
+	genAccounts := genesisInitState.Accounts
 	// create(1000) and fund(1000 + 200000)
-	require.Equal(t, uint64(202000), genBalances.Balances[addrs[0]].MicroAlgos.Raw-ad0)
+	require.Equal(t, uint64(202000), genAccounts[addrs[0]].MicroAlgos.Raw-ad0)
 	// paid 5000, but 1000 fee
-	require.Equal(t, uint64(4000), ad1-genBalances.Balances[addrs[1]].MicroAlgos.Raw)
+	require.Equal(t, uint64(4000), ad1-genAccounts[addrs[1]].MicroAlgos.Raw)
 	// app still has 194000 (paid out 5000, and paid fee to do it)
 	require.Equal(t, uint64(194000), app)
 
 	// Build up Residue in RewardsState so it's ready to pay
 	for i := 1; i < 10; i++ {
-		eval = testingEvaluator{l.nextBlock(t), l}
-		l.endBlock(t, eval)
+		eval = nextBlock(t, l, true, nil)
+		endBlock(t, l, eval)
 	}
 
-	eval = testingEvaluator{l.nextBlock(t), l}
+	eval = nextBlock(t, l, true, nil)
 	payout2 := txntest.Txn{
 		Type:          "appl",
 		Sender:        addrs[1],
 		ApplicationID: ai,
 		Accounts:      []basics.Address{addrs[2]}, // pay other
 	}
-	eval.txn(t, &payout2)
+	txn(t, l, eval, &payout2)
 	// confirm that modifiedAccounts can see account in inner txn
-	found := false
-	vb = l.endBlock(t, eval)
+	vb = endBlock(t, l, eval)
 
 	deltas := vb.Delta()
-	for _, addr := range deltas.Accts.ModifiedAccounts() {
-		if addr == addrs[2] {
-			found = true
-		}
-	}
-	require.True(t, found)
+	require.Contains(t, deltas.Accts.ModifiedAccounts(), addrs[2])
 
 	payInBlock := vb.Block().Payset[0]
 	rewards := payInBlock.ApplyData.SenderRewards.Raw
@@ -284,18 +139,18 @@ func TestPayAction(t *testing.T) {
 	// app gets none, because it has less than 1A
 	require.Equal(t, uint64(0), inners[0].SenderRewards.Raw)
 
-	ad1 = l.micros(t, addrs[1])
-	ad2 := l.micros(t, addrs[2])
-	app = l.micros(t, ai.Address())
+	ad1 = micros(t, l, addrs[1])
+	ad2 := micros(t, l, addrs[2])
+	app = micros(t, l, ai.Address())
 
 	// paid 5000, in first payout (only), but paid 1000 fee in each payout txn
-	require.Equal(t, rewards+3000, ad1-genBalances.Balances[addrs[1]].MicroAlgos.Raw)
+	require.Equal(t, rewards+3000, ad1-genAccounts[addrs[1]].MicroAlgos.Raw)
 	// app still has 188000 (paid out 10000, and paid 2k fees to do it)
 	// no rewards because owns less than an algo
 	require.Equal(t, uint64(200000)-10000-2000, app)
 
 	// paid 5000 by payout2, never paid any fees, got same rewards
-	require.Equal(t, rewards+uint64(5000), ad2-genBalances.Balances[addrs[2]].MicroAlgos.Raw)
+	require.Equal(t, rewards+uint64(5000), ad2-genAccounts[addrs[2]].MicroAlgos.Raw)
 
 	// Now fund the app account much more, so we can confirm it gets rewards.
 	tenkalgos := txntest.Txn{
@@ -304,21 +159,21 @@ func TestPayAction(t *testing.T) {
 		Receiver: ai.Address(),
 		Amount:   10 * 1000 * 1000000, // account min balance, plus fees
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &tenkalgos)
-	l.endBlock(t, eval)
-	beforepay := l.micros(t, ai.Address())
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &tenkalgos)
+	endBlock(t, l, eval)
+	beforepay := micros(t, l, ai.Address())
 
 	// Build up Residue in RewardsState so it's ready to pay again
 	for i := 1; i < 10; i++ {
-		eval = testingEvaluator{l.nextBlock(t), l}
-		l.endBlock(t, eval)
+		eval = nextBlock(t, l, true, nil)
+		endBlock(t, l, eval)
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, payout2.Noted("2"))
-	vb = l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, payout2.Noted("2"))
+	vb = endBlock(t, l, eval)
 
-	afterpay := l.micros(t, ai.Address())
+	afterpay := micros(t, l, ai.Address())
 
 	payInBlock = vb.Block().Payset[0]
 	inners = payInBlock.ApplyData.EvalDelta.InnerTxns
@@ -334,8 +189,10 @@ func TestPayAction(t *testing.T) {
 func TestAxferAction(t *testing.T) {
 	partitiontest.PartitionTest(t)
 
-	genBalances, addrs, _ := ledgertesting.NewTestGenesis()
-	l := newTestLedger(t, genBalances)
+	genesisInitState, addrs, _ := ledgertesting.Genesis(10)
+
+	l, err := ledger.OpenLedger(logging.TestingLog(t), "", true, genesisInitState, config.GetDefaultLocal())
+	require.NoError(t, err)
 	defer l.Close()
 
 	asa := txntest.Txn{
@@ -385,9 +242,9 @@ submit:  itxn_submit
 `),
 	}
 
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &asa, &app)
-	vb := l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &asa, &app)
+	vb := endBlock(t, l, eval)
 
 	asaIndex := basics.AssetIndex(1)
 	require.Equal(t, asaIndex, vb.Block().Payset[0].ApplyData.ConfigAsset)
@@ -402,9 +259,9 @@ submit:  itxn_submit
 		// stay under 1M, to avoid rewards complications
 	}
 
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &fund)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &fund)
+	endBlock(t, l, eval)
 
 	fundgold := txntest.Txn{
 		Type:          "axfer",
@@ -415,11 +272,11 @@ submit:  itxn_submit
 	}
 
 	// Fail, because app account is not opted in.
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &fundgold, fmt.Sprintf("asset %d missing", asaIndex))
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &fundgold, fmt.Sprintf("asset %d missing", asaIndex))
+	endBlock(t, l, eval)
 
-	amount, in := l.asa(t, appIndex.Address(), asaIndex)
+	amount, in := holding(t, l, appIndex.Address(), asaIndex)
 	require.False(t, in)
 	require.Equal(t, amount, uint64(0))
 
@@ -432,20 +289,20 @@ submit:  itxn_submit
 	}
 
 	// Tell the app to opt itself in.
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &optin)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &optin)
+	endBlock(t, l, eval)
 
-	amount, in = l.asa(t, appIndex.Address(), asaIndex)
+	amount, in = holding(t, l, appIndex.Address(), asaIndex)
 	require.True(t, in)
 	require.Equal(t, amount, uint64(0))
 
 	// Now, suceed, because opted in.
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &fundgold)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &fundgold)
+	endBlock(t, l, eval)
 
-	amount, in = l.asa(t, appIndex.Address(), asaIndex)
+	amount, in = holding(t, l, appIndex.Address(), asaIndex)
 	require.True(t, in)
 	require.Equal(t, amount, uint64(20000))
 
@@ -457,27 +314,27 @@ submit:  itxn_submit
 		ForeignAssets:   []basics.AssetIndex{asaIndex},
 		Accounts:        []basics.Address{addrs[0]},
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &withdraw)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &withdraw)
+	endBlock(t, l, eval)
 
-	amount, in = l.asa(t, appIndex.Address(), asaIndex)
+	amount, in = holding(t, l, appIndex.Address(), asaIndex)
 	require.True(t, in)
 	require.Equal(t, amount, uint64(10000))
 
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, withdraw.Noted("2"))
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, withdraw.Noted("2"))
+	endBlock(t, l, eval)
 
-	amount, in = l.asa(t, appIndex.Address(), asaIndex)
+	amount, in = holding(t, l, appIndex.Address(), asaIndex)
 	require.True(t, in) // Zero left, but still opted in
 	require.Equal(t, amount, uint64(0))
 
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, withdraw.Noted("3"), "underflow on subtracting")
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, withdraw.Noted("3"), "underflow on subtracting")
+	endBlock(t, l, eval)
 
-	amount, in = l.asa(t, appIndex.Address(), asaIndex)
+	amount, in = holding(t, l, appIndex.Address(), asaIndex)
 	require.True(t, in) // Zero left, but still opted in
 	require.Equal(t, amount, uint64(0))
 
@@ -490,37 +347,56 @@ submit:  itxn_submit
 		Accounts:        []basics.Address{addrs[0]},
 	}
 
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &close)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &close)
+	endBlock(t, l, eval)
 
-	amount, in = l.asa(t, appIndex.Address(), asaIndex)
+	amount, in = holding(t, l, appIndex.Address(), asaIndex)
 	require.False(t, in) // Zero left, not opted in
 	require.Equal(t, amount, uint64(0))
 
 	// Now, fail again, opted out
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, fundgold.Noted("2"), fmt.Sprintf("asset %d missing", asaIndex))
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, fundgold.Noted("2"), fmt.Sprintf("asset %d missing", asaIndex))
+	endBlock(t, l, eval)
 
 	// Do it all again, so we can test closeTo when we have a non-zero balance
 	// Tell the app to opt itself in.
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, optin.Noted("a"), fundgold.Noted("a"))
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txns(t, l, eval, optin.Noted("a"), fundgold.Noted("a"))
+	endBlock(t, l, eval)
 
-	amount, _ = l.asa(t, appIndex.Address(), asaIndex)
+	amount, _ = holding(t, l, appIndex.Address(), asaIndex)
 	require.Equal(t, uint64(20000), amount)
-	left, _ := l.asa(t, addrs[0], asaIndex)
+	left, _ := holding(t, l, addrs[0], asaIndex)
 
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, close.Noted("a"))
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, close.Noted("a"))
+	endBlock(t, l, eval)
 
-	amount, _ = l.asa(t, appIndex.Address(), asaIndex)
+	amount, _ = holding(t, l, appIndex.Address(), asaIndex)
 	require.Equal(t, uint64(0), amount)
-	back, _ := l.asa(t, addrs[0], asaIndex)
+	back, _ := holding(t, l, addrs[0], asaIndex)
 	require.Equal(t, uint64(20000), back-left)
+}
+
+func newTestLedger(t testing.TB, balances bookkeeping.GenesisBalances) *ledger.Ledger {
+	var genHash crypto.Digest
+	crypto.RandBytes(genHash[:])
+	genBlock, err := bookkeeping.MakeGenesisBlock(protocol.ConsensusFuture, balances, "test", genHash)
+	require.NoError(t, err)
+	require.False(t, genBlock.FeeSink.IsZero())
+	require.False(t, genBlock.RewardsPool.IsZero())
+	dbName := fmt.Sprintf("%s.%d", t.Name(), crypto.RandUint64())
+	cfg := config.GetDefaultLocal()
+	cfg.Archival = true
+	l, err := ledger.OpenLedger(logging.Base(), dbName, true, ledgercore.InitState{
+		Block:       genBlock,
+		Accounts:    balances.Balances,
+		GenesisHash: genHash,
+	}, cfg)
+	require.NoError(t, err)
+	return l
 }
 
 // TestClawbackAction ensures an app address can act as clawback address.
@@ -578,9 +454,9 @@ func TestClawbackAction(t *testing.T) {
 		AssetReceiver: addrs[1],
 		XferAsset:     asaIndex,
 	}
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &asa, &app, &optin)
-	vb := l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &asa, &app, &optin)
+	vb := endBlock(t, l, eval)
 
 	require.Equal(t, asaIndex, vb.Block().Payset[0].ApplyData.ConfigAsset)
 	require.Equal(t, appIndex, vb.Block().Payset[1].ApplyData.ApplicationID)
@@ -599,11 +475,12 @@ func TestClawbackAction(t *testing.T) {
 		ForeignAssets: []basics.AssetIndex{asaIndex},
 		Accounts:      []basics.Address{addrs[0], addrs[1]},
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txgroup(t, &overpay, &clawmove)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	err := txgroup(t, l, eval, &overpay, &clawmove)
+	require.NoError(t, err)
+	endBlock(t, l, eval)
 
-	amount, _ := l.asa(t, addrs[1], asaIndex)
+	amount, _ := holding(t, l, addrs[1], asaIndex)
 	require.Equal(t, amount, uint64(1000))
 }
 
@@ -647,9 +524,9 @@ skipclose:
 		RekeyTo:  appIndex.Address(),
 	}
 
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &ezpayer, &rekey)
-	l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &ezpayer, &rekey)
+	endBlock(t, l, eval)
 
 	useacct := txntest.Txn{
 		Type:          "appl",
@@ -657,16 +534,16 @@ skipclose:
 		ApplicationID: appIndex,
 		Accounts:      []basics.Address{addrs[0], addrs[2]}, // pay 2 from 0 (which was rekeyed)
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &useacct)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &useacct)
+	endBlock(t, l, eval)
 
 	// App was never funded (didn't spend from it's own acct)
-	require.Equal(t, uint64(0), l.micros(t, basics.AppIndex(1).Address()))
+	require.Equal(t, uint64(0), micros(t, l, basics.AppIndex(1).Address()))
 	// addrs[2] got paid
-	require.Equal(t, uint64(5000), l.micros(t, addrs[2])-l.micros(t, addrs[6]))
+	require.Equal(t, uint64(5000), micros(t, l, addrs[2])-micros(t, l, addrs[6]))
 	// addrs[0] paid 5k + rekey fee + inner txn fee
-	require.Equal(t, uint64(7000), l.micros(t, addrs[6])-l.micros(t, addrs[0]))
+	require.Equal(t, uint64(7000), micros(t, l, addrs[6])-micros(t, l, addrs[0]))
 
 	baduse := txntest.Txn{
 		Type:          "appl",
@@ -674,9 +551,9 @@ skipclose:
 		ApplicationID: appIndex,
 		Accounts:      []basics.Address{addrs[2], addrs[0]}, // pay 0 from 2
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &baduse, "unauthorized")
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &baduse, "unauthorized")
+	endBlock(t, l, eval)
 
 	// Now, we close addrs[0], which wipes its rekey status.  Reopen
 	// it, and make sure the app can't spend.
@@ -687,11 +564,11 @@ skipclose:
 		ApplicationID: appIndex,
 		Accounts:      []basics.Address{addrs[0], addrs[2], addrs[3]}, // close to 3
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &close)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &close)
+	endBlock(t, l, eval)
 
-	require.Equal(t, uint64(0), l.micros(t, addrs[0]))
+	require.Equal(t, uint64(0), micros(t, l, addrs[0]))
 
 	payback := txntest.Txn{
 		Type:     "pay",
@@ -699,15 +576,15 @@ skipclose:
 		Receiver: addrs[0],
 		Amount:   10_000_000,
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &payback)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &payback)
+	endBlock(t, l, eval)
 
-	require.Equal(t, uint64(10_000_000), l.micros(t, addrs[0]))
+	require.Equal(t, uint64(10_000_000), micros(t, l, addrs[0]))
 
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, useacct.Noted("2"), "unauthorized")
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, useacct.Noted("2"), "unauthorized")
+	endBlock(t, l, eval)
 }
 
 // TestRekeyActionCloseAccount ensures closing and reopening a rekeyed account in a single app call
@@ -771,9 +648,9 @@ func TestRekeyActionCloseAccount(t *testing.T) {
 		Amount:   1_000_000,
 	}
 
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &create, &rekey, &fund)
-	l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &create, &rekey, &fund)
+	endBlock(t, l, eval)
 
 	useacct := txntest.Txn{
 		Type:          "appl",
@@ -781,9 +658,9 @@ func TestRekeyActionCloseAccount(t *testing.T) {
 		ApplicationID: appIndex,
 		Accounts:      []basics.Address{addrs[0], addrs[2]},
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &useacct, "unauthorized")
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &useacct, "unauthorized")
+	endBlock(t, l, eval)
 }
 
 // TestDuplicatePayAction shows two pays with same parameters can be done as inner tarnsactions
@@ -832,18 +709,18 @@ func TestDuplicatePayAction(t *testing.T) {
 		Accounts:      []basics.Address{addrs[1]}, // pay self
 	}
 
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &create, &fund, &paytwice, create.Noted("in same block"))
-	vb := l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &create, &fund, &paytwice, create.Noted("in same block"))
+	vb := endBlock(t, l, eval)
 
 	require.Equal(t, appIndex, vb.Block().Payset[0].ApplyData.ApplicationID)
 	require.Equal(t, 4, len(vb.Block().Payset))
 	// create=1, fund=2, payTwice=3,4,5
 	require.Equal(t, basics.AppIndex(6), vb.Block().Payset[3].ApplyData.ApplicationID)
 
-	ad0 := l.micros(t, addrs[0])
-	ad1 := l.micros(t, addrs[1])
-	app := l.micros(t, appIndex.Address())
+	ad0 := micros(t, l, addrs[0])
+	ad1 := micros(t, l, addrs[1])
+	app := micros(t, l, appIndex.Address())
 
 	// create(1000) and fund(1000 + 200000), extra create (1000)
 	require.Equal(t, 203000, int(genBalances.Balances[addrs[0]].MicroAlgos.Raw-ad0))
@@ -853,9 +730,9 @@ func TestDuplicatePayAction(t *testing.T) {
 	require.Equal(t, 188000, int(app))
 
 	// Now create another app, and see if it gets the index we expect.
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, create.Noted("again"))
-	vb = l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txns(t, l, eval, create.Noted("again"))
+	vb = endBlock(t, l, eval)
 
 	// create=1, fund=2, payTwice=3,4,5, insameblock=6
 	require.Equal(t, basics.AppIndex(7), vb.Block().Payset[0].ApplyData.ApplicationID)
@@ -898,14 +775,14 @@ func TestInnerTxnCount(t *testing.T) {
 		Accounts:      []basics.Address{addrs[1]}, // pay self
 	}
 
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &create, &fund)
-	vb := l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &create, &fund)
+	vb := endBlock(t, l, eval)
 	require.Equal(t, 2, int(vb.Block().TxnCounter))
 
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &payout1)
-	vb = l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txns(t, l, eval, &payout1)
+	vb = endBlock(t, l, eval)
 	require.Equal(t, 4, int(vb.Block().TxnCounter))
 }
 
@@ -1023,9 +900,9 @@ submit:  itxn_submit
 		Amount:   200_000, // exactly account min balance + one asset
 	}
 
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &app, &fund)
-	l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &app, &fund)
+	endBlock(t, l, eval)
 
 	createAsa := txntest.Txn{
 		Type:            "appl",
@@ -1034,17 +911,17 @@ submit:  itxn_submit
 		ApplicationArgs: [][]byte{[]byte("create")},
 	}
 
-	eval = testingEvaluator{l.nextBlock(t), l}
+	eval = nextBlock(t, l, true, nil)
 	// Can't create an asset if you have exactly 200,000 and need to pay fee
-	eval.txn(t, &createAsa, "balance 199000 below min 200000")
+	txn(t, l, eval, &createAsa, "balance 199000 below min 200000")
 	// fund it some more and try again
-	eval.txns(t, fund.Noted("more!"), &createAsa)
-	vb := l.endBlock(t, eval)
+	txns(t, l, eval, fund.Noted("more!"), &createAsa)
+	vb := endBlock(t, l, eval)
 
 	asaIndex := vb.Block().Payset[1].EvalDelta.InnerTxns[0].ConfigAsset
 	require.Equal(t, basics.AssetIndex(5), asaIndex)
 
-	asaParams, err := l.asaParams(t, basics.AssetIndex(5))
+	asaParams, err := asaParams(t, l, basics.AssetIndex(5))
 	require.NoError(t, err)
 
 	require.Equal(t, 1_000_000, int(asaParams.Total))
@@ -1063,10 +940,10 @@ submit:  itxn_submit
 			ApplicationArgs: [][]byte{[]byte(a), []byte("junkjunkjunkjunkjunkjunkjunkjunk")},
 			ForeignAssets:   []basics.AssetIndex{asaIndex},
 		}
-		eval = testingEvaluator{l.nextBlock(t), l}
+		eval = nextBlock(t, l, true, nil)
 		t.Log(a)
-		eval.txn(t, &check)
-		l.endBlock(t, eval)
+		txn(t, l, eval, &check)
+		endBlock(t, l, eval)
 	}
 	// Not the manager anymore so this won't work
 	nodice := txntest.Txn{
@@ -1076,9 +953,9 @@ submit:  itxn_submit
 		ApplicationArgs: [][]byte{[]byte("freeze"), []byte("junkjunkjunkjunkjunkjunkjunkjunk")},
 		ForeignAssets:   []basics.AssetIndex{asaIndex},
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &nodice, "this transaction should be issued by the manager")
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &nodice, "this transaction should be issued by the manager")
+	endBlock(t, l, eval)
 
 }
 
@@ -1118,20 +995,20 @@ func TestAsaDuringInit(t *testing.T) {
          itxn CreatedAssetID
          int 3
          ==
+         assert
          itxn CreatedApplicationID
          int 0
          ==
-         &&
+         assert
          itxn NumLogs
          int 0
          ==
-         &&
 `,
 	}
 
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &prefund, &app)
-	vb := l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &prefund, &app)
+	vb := endBlock(t, l, eval)
 
 	require.Equal(t, appIndex, vb.Block().Payset[1].ApplicationID)
 
@@ -1166,9 +1043,9 @@ func TestRekey(t *testing.T) {
 `),
 	}
 
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &app)
-	vb := l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &app)
+	vb := endBlock(t, l, eval)
 	appIndex := vb.Block().Payset[0].ApplicationID
 	require.Equal(t, basics.AppIndex(1), appIndex)
 
@@ -1183,10 +1060,10 @@ func TestRekey(t *testing.T) {
 		Sender:        addrs[1],
 		ApplicationID: appIndex,
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &fund, &rekey)
-	eval.txn(t, rekey.Noted("2"), "unauthorized")
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txns(t, l, eval, &fund, &rekey)
+	txn(t, l, eval, rekey.Noted("2"), "unauthorized")
+	endBlock(t, l, eval)
 
 }
 
@@ -1214,9 +1091,9 @@ func TestNote(t *testing.T) {
 `),
 	}
 
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &app)
-	vb := l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &app)
+	vb := endBlock(t, l, eval)
 	appIndex := vb.Block().Payset[0].ApplicationID
 	require.Equal(t, basics.AppIndex(1), appIndex)
 
@@ -1231,9 +1108,9 @@ func TestNote(t *testing.T) {
 		Sender:        addrs[1],
 		ApplicationID: appIndex,
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &fund, &note)
-	vb = l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txns(t, l, eval, &fund, &note)
+	vb = endBlock(t, l, eval)
 	alphabet := vb.Block().Payset[1].EvalDelta.InnerTxns[0].Txn.Note
 	require.Equal(t, "abcdefghijklmnopqrstuvwxyz01234567890", string(alphabet))
 }
@@ -1274,9 +1151,9 @@ nonpart:
 	}
 
 	// Create the app
-	eval := testingEvaluator{l.nextBlock(t), l}
-	eval.txns(t, &app)
-	vb := l.endBlock(t, eval)
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &app)
+	vb := endBlock(t, l, eval)
 	appIndex := vb.Block().Payset[0].ApplicationID
 	require.Equal(t, basics.AppIndex(1), appIndex)
 
@@ -1287,16 +1164,16 @@ nonpart:
 		Receiver: appIndex.Address(),
 		Amount:   1_000_000_000,
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &fund)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &fund)
+	endBlock(t, l, eval)
 
-	require.Equal(t, 1_000_000_000, int(l.micros(t, appIndex.Address())))
+	require.Equal(t, 1_000_000_000, int(micros(t, l, appIndex.Address())))
 
 	// Build up Residue in RewardsState so it's ready to pay
 	for i := 1; i < 10; i++ {
-		eval := testingEvaluator{l.nextBlock(t), l}
-		l.endBlock(t, eval)
+		eval := nextBlock(t, l, true, nil)
+		endBlock(t, l, eval)
 	}
 
 	// pay a little
@@ -1306,11 +1183,11 @@ nonpart:
 		ApplicationID:   appIndex,
 		ApplicationArgs: [][]byte{[]byte("pay")},
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &pay)
-	l.endBlock(t, eval)
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &pay)
+	endBlock(t, l, eval)
 	// 2000 was earned in rewards (- 1000 fee, -1 pay)
-	require.Equal(t, 1_000_000_999, int(l.micros(t, appIndex.Address())))
+	require.Equal(t, 1_000_000_999, int(micros(t, l, appIndex.Address())))
 
 	// Go nonpart
 	nonpart := txntest.Txn{
@@ -1319,21 +1196,307 @@ nonpart:
 		ApplicationID:   appIndex,
 		ApplicationArgs: [][]byte{[]byte("nonpart")},
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, &nonpart)
-	l.endBlock(t, eval)
-	require.Equal(t, 999_999_999, int(l.micros(t, appIndex.Address())))
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, &nonpart)
+	endBlock(t, l, eval)
+	require.Equal(t, 999_999_999, int(micros(t, l, appIndex.Address())))
 
 	// Build up Residue in RewardsState so it's ready to pay AGAIN
 	// But expect no rewards
 	for i := 1; i < 100; i++ {
-		eval := testingEvaluator{l.nextBlock(t), l}
-		l.endBlock(t, eval)
+		eval := nextBlock(t, l, true, nil)
+		endBlock(t, l, eval)
 	}
-	eval = testingEvaluator{l.nextBlock(t), l}
-	eval.txn(t, pay.Noted("again"))
-	eval.txn(t, nonpart.Noted("again"), "cannot change online/offline")
-	l.endBlock(t, eval)
-	// Ppaid fee and 1.  Did not get rewards
-	require.Equal(t, 999_998_998, int(l.micros(t, appIndex.Address())))
+	eval = nextBlock(t, l, true, nil)
+	txn(t, l, eval, pay.Noted("again"))
+	txn(t, l, eval, nonpart.Noted("again"), "cannot change online/offline")
+	endBlock(t, l, eval)
+	// Paid fee + 1.  Did not get rewards
+	require.Equal(t, 999_998_998, int(micros(t, l, appIndex.Address())))
+}
+
+func TestInnerAppCall(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	genBalances, addrs, _ := ledgertesting.NewTestGenesis()
+	l := newTestLedger(t, genBalances)
+	defer l.Close()
+
+	app0 := txntest.Txn{
+		Type:   "appl",
+		Sender: addrs[0],
+		ApprovalProgram: main(`
+  itxn_begin
+   int pay
+   itxn_field TypeEnum
+   int 1
+   itxn_field Amount
+   txn Sender
+   itxn_field Receiver
+  itxn_submit
+`),
+	}
+	eval := nextBlock(t, l, true, nil)
+	txn(t, l, eval, &app0)
+	vb := endBlock(t, l, eval)
+	index0 := vb.Block().Payset[0].ApplicationID
+
+	app1 := txntest.Txn{
+		Type:   "appl",
+		Sender: addrs[1],
+		ApprovalProgram: main(`
+  itxn_begin
+   int appl
+   itxn_field TypeEnum
+   txn Applications 1
+   itxn_field ApplicationID
+  itxn_submit
+`),
+	}
+
+	eval = nextBlock(t, l, true, nil)
+	txns(t, l, eval, &app1)
+	vb = endBlock(t, l, eval)
+	index1 := vb.Block().Payset[0].ApplicationID
+
+	fund0 := txntest.Txn{
+		Type:     "pay",
+		Sender:   addrs[0],
+		Receiver: index0.Address(),
+		Amount:   1_000_000_000,
+	}
+	fund1 := fund0
+	fund1.Receiver = index1.Address()
+
+	call1 := txntest.Txn{
+		Type:          "appl",
+		Sender:        addrs[2],
+		ApplicationID: index1,
+		ForeignApps:   []basics.AppIndex{index0},
+	}
+	eval = nextBlock(t, l, true, nil)
+	txns(t, l, eval, &fund0, &fund1, &call1)
+	endBlock(t, l, eval)
+
+}
+
+// TestInnerAppManipulate ensures that apps called from inner transactions make
+// the changes expected when invoked.
+func TestInnerAppManipulate(t *testing.T) {
+	partitiontest.PartitionTest(t)
+
+	genBalances, addrs, _ := ledgertesting.NewTestGenesis()
+	l := newTestLedger(t, genBalances)
+	defer l.Close()
+
+	calleeIndex := basics.AppIndex(1)
+	callee := txntest.Txn{
+		Type:   "appl",
+		Sender: addrs[0],
+		// This app set a global key arg[1] to arg[2] or get arg[1] and log it
+		ApprovalProgram: main(`
+ txn ApplicationArgs 0
+ byte "set"
+ ==
+ bz next1
+ txn ApplicationArgs 1
+ txn ApplicationArgs 2
+ app_global_put
+ b end
+next1:
+ txn ApplicationArgs 0
+ byte "get"
+ ==
+ bz next2
+ txn ApplicationArgs 1
+ app_global_get
+ log							// Fails if key didn't exist, b/c TOS = 0
+ b end
+next2:
+ err
+`),
+		GlobalStateSchema: basics.StateSchema{
+			NumByteSlice: 1,
+		},
+	}
+	fund := txntest.Txn{
+		Type:     "pay",
+		Sender:   addrs[0],
+		Receiver: calleeIndex.Address(),
+		Amount:   1_000_000,
+	}
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &callee, &fund)
+	vb := endBlock(t, l, eval)
+	require.Equal(t, calleeIndex, vb.Block().Payset[0].ApplicationID)
+
+	callerIndex := basics.AppIndex(3)
+	caller := txntest.Txn{
+		Type:   "appl",
+		Sender: addrs[0],
+		ApprovalProgram: main(`
+ itxn_begin
+   int appl
+   itxn_field TypeEnum
+   txn Applications 1
+   itxn_field ApplicationID
+   byte "set"
+   itxn_field ApplicationArgs
+   byte "X"
+   itxn_field ApplicationArgs
+   byte "A"
+   itxn_field ApplicationArgs
+  itxn_submit
+  itxn NumLogs
+  int 0
+  ==
+  assert
+  b end
+`),
+	}
+	fund.Receiver = callerIndex.Address()
+
+	eval = nextBlock(t, l, true, nil)
+	txns(t, l, eval, &caller, &fund)
+	vb = endBlock(t, l, eval)
+	require.Equal(t, callerIndex, vb.Block().Payset[0].ApplicationID)
+
+	call := txntest.Txn{
+		Type:          "appl",
+		Sender:        addrs[0],
+		ApplicationID: callerIndex,
+		ForeignApps:   []basics.AppIndex{calleeIndex},
+	}
+	eval = nextBlock(t, l, true, nil)
+	txns(t, l, eval, &call)
+	vb = endBlock(t, l, eval)
+	tib := vb.Block().Payset[0]
+	// No changes in the top-level EvalDelta
+	require.Empty(t, tib.EvalDelta.GlobalDelta)
+	require.Empty(t, tib.EvalDelta.LocalDeltas)
+
+	inner := tib.EvalDelta.InnerTxns[0]
+	require.Empty(t, inner.EvalDelta.LocalDeltas)
+
+	require.Len(t, inner.EvalDelta.GlobalDelta, 1)
+	require.Equal(t, basics.ValueDelta{
+		Action: basics.SetBytesAction,
+		Bytes:  "A",
+	}, inner.EvalDelta.GlobalDelta["X"])
+}
+
+// TestCreateAndUse checks that an ASA can be created in an early tx, and then
+// used in a later app call tx (in the same group).  This was not allowed until
+// v6, because of the strict adherence to the foreign-arrays rules.
+func TestCreateAndUse(t *testing.T) {
+	genBalances, addrs, _ := ledgertesting.NewTestGenesis()
+	l := newTestLedger(t, genBalances)
+	defer l.Close()
+
+	createapp := txntest.Txn{
+		Type:   "appl",
+		Sender: addrs[0],
+		ApprovalProgram: main(`
+         itxn_begin
+         int axfer; itxn_field TypeEnum
+         int 0;     itxn_field Amount
+         gaid 0;    itxn_field XferAsset
+         global CurrentApplicationAddress;  itxn_field Sender
+         global CurrentApplicationAddress;  itxn_field AssetReceiver
+         itxn_submit
+`),
+	}
+	appIndex := basics.AppIndex(1)
+
+	fund := txntest.Txn{
+		Type:     "pay",
+		Sender:   addrs[0],
+		Receiver: appIndex.Address(),
+		Amount:   1_000_000,
+	}
+
+	createasa := txntest.Txn{
+		Type:   "acfg",
+		Sender: addrs[0],
+		AssetParams: basics.AssetParams{
+			Total:     1000000,
+			Decimals:  3,
+			UnitName:  "oz",
+			AssetName: "Gold",
+			URL:       "https://gold.rush/",
+		},
+	}
+	asaIndex := basics.AssetIndex(3)
+
+	use := txntest.Txn{
+		Type:          "appl",
+		Sender:        addrs[0],
+		ApplicationID: basics.AppIndex(1),
+		// The point of this test is to show the following (psychic) setting is unnecessary.
+		//ForeignAssets: []basics.AssetIndex{asaIndex},
+	}
+
+	eval := nextBlock(t, l, true, nil)
+	txn(t, l, eval, &createapp)
+	txn(t, l, eval, &fund)
+	err := txgroup(t, l, eval, &createasa, &use)
+	require.NoError(t, err)
+	vb := endBlock(t, l, eval)
+
+	require.Equal(t, appIndex, vb.Block().Payset[0].ApplyData.ApplicationID)
+	require.Equal(t, asaIndex, vb.Block().Payset[2].ApplyData.ConfigAsset)
+}
+
+func TestGtxnEffects(t *testing.T) {
+	genBalances, addrs, _ := ledgertesting.NewTestGenesis()
+	l := newTestLedger(t, genBalances)
+	defer l.Close()
+
+	createapp := txntest.Txn{
+		Type:   "appl",
+		Sender: addrs[0],
+		ApprovalProgram: main(`
+         gtxn 0 CreatedAssetID
+         int 3
+         ==
+         assert
+`),
+	}
+	appIndex := basics.AppIndex(1)
+
+	fund := txntest.Txn{
+		Type:     "pay",
+		Sender:   addrs[0],
+		Receiver: appIndex.Address(),
+		Amount:   1_000_000,
+	}
+
+	eval := nextBlock(t, l, true, nil)
+	txns(t, l, eval, &createapp, &fund)
+
+	createasa := txntest.Txn{
+		Type:   "acfg",
+		Sender: addrs[0],
+		AssetParams: basics.AssetParams{
+			Total:     1000000,
+			Decimals:  3,
+			UnitName:  "oz",
+			AssetName: "Gold",
+			URL:       "https://gold.rush/",
+		},
+	}
+	asaIndex := basics.AssetIndex(3)
+
+	see := txntest.Txn{
+		Type:          "appl",
+		Sender:        addrs[0],
+		ApplicationID: basics.AppIndex(1),
+	}
+
+	err := txgroup(t, l, eval, &createasa, &see)
+	require.NoError(t, err)
+	vb := endBlock(t, l, eval)
+
+	require.Equal(t, appIndex, vb.Block().Payset[0].ApplyData.ApplicationID)
+	require.Equal(t, asaIndex, vb.Block().Payset[2].ApplyData.ConfigAsset)
 }

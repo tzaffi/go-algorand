@@ -251,6 +251,7 @@ Some of these have immediate data in the byte or bytes after the opcode.
 | `stores` | pop indexes A and B. store B to the Ath scratch space |
 | `gload t i` | push Ith scratch space index of the Tth transaction in the current group |
 | `gloads i` | push Ith scratch space index of the Xth transaction in the current group |
+| `gloadss` | push Bth scratch space index of the Ath transaction in the current group |
 | `gaid t` | push the ID of the asset or application created in the Tth transaction of the current group |
 | `gaids` | push the ID of the asset or application created in the Xth transaction of the current group |
 
@@ -342,6 +343,9 @@ Global fields are fields that are common to all the transactions in the group. I
 | 9 | CreatorAddress | []byte | Address of the creator of the current application. Fails if no such application is executing. LogicSigVersion >= 3. |
 | 10 | CurrentApplicationAddress | []byte | Address that the current application controls. Fails in LogicSigs. LogicSigVersion >= 5. |
 | 11 | GroupID | []byte | ID of the transaction group. 32 zero bytes if the transaction is not part of a group. LogicSigVersion >= 5. |
+| 12 | OpcodeBudget | uint64 | The remaining cost that can be spent by opcodes in this program. LogicSigVersion >= 6. |
+| 13 | CallerApplicationID | uint64 | The application ID of the application that called this application. 0 if this application is at the top-level. LogicSigVersion >= 6. |
+| 14 | CallerApplicationAddress | []byte | The application address of the application that called this application. ZeroAddress if this application is at the top-level. LogicSigVersion >= 6. |
 
 
 **Asset Fields**
@@ -471,8 +475,10 @@ transaction types, are rejected by `itxn_submit`.
 | `itxn_next` | begin preparation of a new inner transaction in the same transaction group |
 | `itxn_field f` | set field F of the current inner transaction to X |
 | `itxn_submit` | execute the current inner transaction group. Fail if executing this group would exceed 16 total inner transactions, or if any transaction in the group fails. |
-| `itxn f` | push field F of the last inner transaction to stack |
-| `itxna f i` | push Ith value of the array field F of the last inner transaction to stack |
+| `itxn f` | push field F of the last inner transaction |
+| `itxna f i` | push Ith value of the array field F of the last inner transaction |
+| `gitxn t f` | push field F of the Tth transaction in the last inner group |
+| `gitxna t f i` | push Ith value of the array field F from the Tth transaction in the last inner group |
 
 
 # Assembler Syntax

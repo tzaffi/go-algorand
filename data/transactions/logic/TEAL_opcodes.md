@@ -524,6 +524,9 @@ FirstValidTime causes the program to fail. The field is reserved for future use.
 | 9 | CreatorAddress | []byte | Address of the creator of the current application. Fails if no such application is executing. LogicSigVersion >= 3. |
 | 10 | CurrentApplicationAddress | []byte | Address that the current application controls. Fails in LogicSigs. LogicSigVersion >= 5. |
 | 11 | GroupID | []byte | ID of the transaction group. 32 zero bytes if the transaction is not part of a group. LogicSigVersion >= 5. |
+| 12 | OpcodeBudget | uint64 | The remaining cost that can be spent by opcodes in this program. LogicSigVersion >= 6. |
+| 13 | CallerApplicationID | uint64 | The application ID of the application that called this application. 0 if this application is at the top-level. LogicSigVersion >= 6. |
+| 14 | CallerApplicationAddress | []byte | The application address of the application that called this application. ZeroAddress if this application is at the top-level. LogicSigVersion >= 6. |
 
 
 ## gtxn t f
@@ -874,7 +877,7 @@ decodes X using the base64 encoding alphabet E. Specify the alphabet with an imm
 - LogicSigVersion >= 2
 - Mode: Application
 
-params: Before v4, Txn.Accounts offset. Since v4, Txn.Accounts offset or an account address that appears in Txn.Accounts or is Txn.Sender). Return: value.
+params: Txn.Accounts offset (or, since v4, an account address that appears in Txn.Accounts or is Txn.Sender), application id (or, since v4, a Txn.ForeignApps offset). Return: value.
 
 ## app_opted_in
 
@@ -1060,7 +1063,7 @@ params: Txn.ForeignApps offset or an app id that appears in Txn.ForeignApps. Ret
 - LogicSigVersion >= 3
 - Mode: Application
 
-params: Before v4, Txn.Accounts offset. Since v4, Txn.Accounts offset or an account address that appears in Txn.Accounts or is Txn.Sender). Return: value.
+params: Txn.Accounts offset (or, since v4, an account address that appears in Txn.Accounts or is Txn.Sender), application id (or, since v4, a Txn.ForeignApps offset). Return: value.
 
 ## pushbytes bytes
 
@@ -1340,7 +1343,7 @@ bitlen interprets arrays as big-endian integers, unlike setbit/getbit
 - Opcode: 0xb4 {uint8 transaction field index}
 - Pops: _None_
 - Pushes: any
-- push field F of the last inner transaction to stack
+- push field F of the last inner transaction
 - LogicSigVersion >= 5
 - Mode: Application
 
@@ -1349,7 +1352,7 @@ bitlen interprets arrays as big-endian integers, unlike setbit/getbit
 - Opcode: 0xb5 {uint8 transaction field index} {uint8 transaction field array index}
 - Pops: _None_
 - Pushes: any
-- push Ith value of the array field F of the last inner transaction to stack
+- push Ith value of the array field F of the last inner transaction
 - LogicSigVersion >= 5
 - Mode: Application
 
@@ -1359,6 +1362,24 @@ bitlen interprets arrays as big-endian integers, unlike setbit/getbit
 - Pops: _None_
 - Pushes: _None_
 - begin preparation of a new inner transaction in the same transaction group
+- LogicSigVersion >= 6
+- Mode: Application
+
+## gitxn t f
+
+- Opcode: 0xb7 {uint8 transaction group index} {uint8 transaction field index}
+- Pops: _None_
+- Pushes: any
+- push field F of the Tth transaction in the last inner group
+- LogicSigVersion >= 6
+- Mode: Application
+
+## gitxna t f i
+
+- Opcode: 0xb8 {uint8 transaction group index} {uint8 transaction field index} {uint8 transaction field array index}
+- Pops: _None_
+- Pushes: any
+- push Ith value of the array field F from the Tth transaction in the last inner group
 - LogicSigVersion >= 6
 - Mode: Application
 
@@ -1394,3 +1415,12 @@ bitlen interprets arrays as big-endian integers, unlike setbit/getbit
 - push Xth LogicSig argument to stack
 - LogicSigVersion >= 5
 - Mode: Signature
+
+## gloadss
+
+- Opcode: 0xc4
+- Pops: *... stack*, {uint64 A}, {uint64 B}
+- Pushes: any
+- push Bth scratch space index of the Ath transaction in the current group
+- LogicSigVersion >= 6
+- Mode: Application
