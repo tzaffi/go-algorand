@@ -61,6 +61,7 @@ var rawRequestPaths = map[string]bool{
 	"/v1/transactions":  true,
 	"/v2/teal/dryrun":   true,
 	"/v2/teal/compile":  true,
+	"/v2/teal/disassemble":  true,
 	"/v2/participation": true,
 }
 
@@ -153,14 +154,39 @@ func stripTransaction(tx string) string {
 	return tx
 }
 
+type tracer struct {
+	Path 		string 				 `json:"path"`
+	Method 		string 				 `json:"method"`
+	// only for endpoints receiving raw bytes. cf. `rawRequestPaths`:
+	BytesB64 	*string  			 `json:"bytesB64"`	
+	// for the non-raw bytes endpoints:
+	Values 		*map[string][]string `json:"values"` 
+	EncodeJSON 	bool  				 `json:"encodeJSON"`
+	DecodeJSON  bool				 `json:"decodeJSON"`
+	ResponseErr *string				 `json:"responseErr"`
+	ResponseB64 *string				 `json:"responseB64"`
+}
+
+func asPtr[T any](t T) *T {
+	return &t
+}
+
 // submitForm is a helper used for submitting (ex.) GETs and POSTs to the server
-func (client RestClient) submitForm(response interface{}, path string, request interface{}, requestMethod string, encodeJSON bool, decodeJSON bool) error {
+func (client RestClient) submitForm(response interface{}, path string, request interface{}, requestMethod string, encodeJSON bool, decodeJSON bool, tracers ...tracer) error {
+	trace := len(tracers) > 0
+
 	var err error
 	queryURL := client.serverURL
 	queryURL.Path = path
-
 	var req *http.Request
 	var body io.Reader
+
+	if trace {
+		tracers[0].Path = path
+		tracers[0].Method = requestMethod
+		tracers[0].EncodeJSON = encodeJSON
+		tracers[0].DecodeJSON = decodeJSON
+	}
 
 	if request != nil {
 		if rawRequestPaths[path] {
@@ -168,11 +194,17 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 			if !ok {
 				return fmt.Errorf("couldn't decode raw request as bytes")
 			}
+			if trace {
+				tracers[0].BytesB64 = asPtr(base64.StdEncoding.EncodeToString(reqBytes))
+			}
 			body = bytes.NewBuffer(reqBytes)
 		} else {
 			v, err := query.Values(request)
 			if err != nil {
 				return err
+			}
+			if trace {
+				tracers[0].Values = asPtr(map[string][]string(v))
 			}
 
 			queryURL.RawQuery = v.Encode()
@@ -197,7 +229,18 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		if trace {
+			tracers[0].ResponseErr = asPtr(err.Error())
+		}
 		return err
+	}
+
+	if trace {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		tracers[0].ResponseB64 = asPtr(base64.StdEncoding.EncodeToString(bodyBytes))
 	}
 
 	// Ensure response isn't too large
@@ -206,8 +249,16 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 
 	err = extractError(resp)
 	if err != nil {
+		if trace {
+			tracers[0].ResponseErr = asPtr(err.Error())
+		}
 		return err
 	}
+	
+	if trace {
+		tracers[0].ResponseErr = asPtr(err.Error())
+	}
+
 
 	if decodeJSON {
 		dec := json.NewDecoder(resp.Body)
@@ -323,7 +374,7 @@ type pendingTransactionsParams struct {
 // GetPendingTransactions asks algod for a snapshot of current pending txns on the node, bounded by maxTxns.
 // If maxTxns = 0, fetches as many transactions as possible.
 func (client RestClient) GetPendingTransactions(maxTxns uint64) (response v1.PendingTransactions, err error) {
-	err = client.get(&response, fmt.Sprintf("/v1/transactions/pending"), pendingTransactionsParams{maxTxns})
+	err = client.get(&response, "/v1/transactions/pending", pendingTransactionsParams{maxTxns})
 	return
 }
 
@@ -355,10 +406,6 @@ type assetsParams struct {
 	Max      uint64 `url:"max"`
 }
 
-type appsParams struct {
-	AppIdx uint64 `url:"appIdx"`
-	Max    uint64 `url:"max"`
-}
 
 type rawblockParams struct {
 	Raw uint64 `url:"raw"`
@@ -609,6 +656,20 @@ func (client RestClient) Compile(program []byte) (compiledProgram []byte, progra
 	return
 }
 
+// Disassemble disassembles the given program bytes and returns the disassembled program
+func (client RestClient) Disassemble(assembled []byte, tracers ...tracer) (program *string, err error) {
+	var disResponse generatedV2.DisassembleResponse
+	err = client.submitForm(&disResponse, "/v2/teal/disassemble", assembled, "POST", false, true, tracers...)
+	if err != nil {
+		return nil, err
+	}
+	program = &disResponse.Result
+	if err != nil {
+		return nil, err
+	}
+	return
+}
+
 func (client RestClient) doGetWithQuery(ctx context.Context, path string, queryArgs map[string]string) (result string, err error) {
 	queryURL := client.serverURL
 	queryURL.Path = path
@@ -658,6 +719,7 @@ func (client RestClient) LightBlockHeaderProof(round uint64) (response generated
 	err = client.get(&response, fmt.Sprintf("/v2/blocks/%d/lightheader/proof", round), nil)
 	return
 }
+
 
 // TransactionProof gets a Merkle proof for a transaction in a block.
 func (client RestClient) TransactionProof(txid string, round uint64, hashType crypto.HashType) (response generatedV2.TransactionProofResponse, err error) {

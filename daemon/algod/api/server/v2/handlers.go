@@ -1352,7 +1352,7 @@ func (v2 *Handlers) GetLightBlockHeaderProof(ctx echo.Context, round uint64) err
 // TealDisassemble disassembles the program bytecode in base64 into TEAL code.
 // (POST /v2/teal/disassemble)
 func (v2 *Handlers) TealDisassemble(ctx echo.Context) error {
-	// return early if teal compile is not allowed in node config
+	// return early if not developer API node:
 	if !v2.Node.Config().EnableDeveloperAPI {
 		return ctx.String(http.StatusNotFound, "/teal/disassemble was not enabled in the configuration file by setting the EnableDeveloperAPI to true")
 	}
