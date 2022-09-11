@@ -125,3 +125,8 @@ var defaultLocal = Local{
 	UseXForwardedForAddressField:               "",
 	VerifiedTranscationsCacheSize:              150000,
 }
+
+// TODO: can I use this to make setupSynchronizedREST less ugly?
+func DefaultLocal() Local {
+	return defaultLocal
+}

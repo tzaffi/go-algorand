@@ -58,11 +58,11 @@ const (
 
 // rawRequestPaths is a set of paths where the body should not be urlencoded
 var rawRequestPaths = map[string]bool{
-	"/v1/transactions":  true,
-	"/v2/teal/dryrun":   true,
-	"/v2/teal/compile":  true,
-	"/v2/teal/disassemble":  true,
-	"/v2/participation": true,
+	"/v1/transactions":     true,
+	"/v2/teal/dryrun":      true,
+	"/v2/teal/compile":     true,
+	"/v2/teal/disassemble": true,
+	"/v2/participation":    true,
 }
 
 // unauthorizedRequestError is generated when we receive 401 error from the server. This error includes the inner error
@@ -95,6 +95,33 @@ type RestClient struct {
 	serverURL       url.URL
 	apiToken        string
 	versionAffinity APIVersion
+}
+
+type Trace struct {
+	Path   string `json:"path"`
+	Method string `json:"method"`
+
+	// only for endpoints receiving raw bytes. cf. `rawRequestPaths`:
+	BytesB64 *string `json:"bytesB64"`
+
+	// for the non-raw bytes endpoints:
+	Values *map[string][]string `json:"values"`
+
+	EncodeJSON  bool    `json:"encodeJSON"`
+	DecodeJSON  bool    `json:"decodeJSON"`
+	StatusCode  int     `json:"statusCode"`
+	ResponseErr *string `json:"responseErr"`
+
+	// base64 encoded response regardless of DecodeJSON:
+	ResponseB64 *string `json:"responseB64"`
+
+	// for DecodeJSON responses only:
+	ParsedResponseType string      `json:"parsedResponseGoType"`
+	ParsedResponse     interface{} `json:"parsedResponse"`
+}
+
+func asPtr[T any](t T) *T {
+	return &t
 }
 
 // MakeRestClient is the factory for constructing a RestClient for a given endpoint
@@ -154,25 +181,8 @@ func stripTransaction(tx string) string {
 	return tx
 }
 
-type tracer struct {
-	Path 		string 				 `json:"path"`
-	Method 		string 				 `json:"method"`
-	// only for endpoints receiving raw bytes. cf. `rawRequestPaths`:
-	BytesB64 	*string  			 `json:"bytesB64"`	
-	// for the non-raw bytes endpoints:
-	Values 		*map[string][]string `json:"values"` 
-	EncodeJSON 	bool  				 `json:"encodeJSON"`
-	DecodeJSON  bool				 `json:"decodeJSON"`
-	ResponseErr *string				 `json:"responseErr"`
-	ResponseB64 *string				 `json:"responseB64"`
-}
-
-func asPtr[T any](t T) *T {
-	return &t
-}
-
 // submitForm is a helper used for submitting (ex.) GETs and POSTs to the server
-func (client RestClient) submitForm(response interface{}, path string, request interface{}, requestMethod string, encodeJSON bool, decodeJSON bool, tracers ...tracer) error {
+func (client RestClient) submitForm(response interface{}, path string, request interface{}, requestMethod string, encodeJSON bool, decodeJSON bool, tracers ...*Trace) error {
 	trace := len(tracers) > 0
 
 	var err error
@@ -186,6 +196,7 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 		tracers[0].Method = requestMethod
 		tracers[0].EncodeJSON = encodeJSON
 		tracers[0].DecodeJSON = decodeJSON
+		tracers[0].ParsedResponseType = fmt.Sprintf("%T", response)
 	}
 
 	if request != nil {
@@ -195,6 +206,8 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 				return fmt.Errorf("couldn't decode raw request as bytes")
 			}
 			if trace {
+				// currently, trace is intended for tracing response handling, so no
+				// futher breadcrumbs provided when the raw request is malformed
 				tracers[0].BytesB64 = asPtr(base64.StdEncoding.EncodeToString(reqBytes))
 			}
 			body = bytes.NewBuffer(reqBytes)
@@ -236,6 +249,8 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	}
 
 	if trace {
+		tracers[0].StatusCode = resp.StatusCode
+
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
@@ -254,15 +269,14 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 		}
 		return err
 	}
-	
-	if trace {
-		tracers[0].ResponseErr = asPtr(err.Error())
-	}
-
 
 	if decodeJSON {
 		dec := json.NewDecoder(resp.Body)
-		return dec.Decode(&response)
+		err := dec.Decode(&response)
+		if trace {
+			tracers[0].ParsedResponse = response
+		}
+		return err
 	}
 
 	// Response must implement RawResponse
@@ -278,6 +292,11 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 
 	raw.SetBytes(bodyBytes)
 	return nil
+}
+
+func genericSubmit[R any](client RestClient, bytes []byte, route, method string, encodeJSON, decodeJSON bool, tracers ...*Trace) (resp R, err error) {
+	err = client.submitForm(&resp, "/v2/teal/disassemble", bytes, method, encodeJSON, decodeJSON, tracers...)
+	return
 }
 
 // get performs a GET request to the specific path against the server
@@ -405,7 +424,6 @@ type assetsParams struct {
 	AssetIdx uint64 `url:"assetIdx"`
 	Max      uint64 `url:"max"`
 }
-
 
 type rawblockParams struct {
 	Raw uint64 `url:"raw"`
@@ -656,18 +674,16 @@ func (client RestClient) Compile(program []byte) (compiledProgram []byte, progra
 	return
 }
 
-// Disassemble disassembles the given program bytes and returns the disassembled program
-func (client RestClient) Disassemble(assembled []byte, tracers ...tracer) (program *string, err error) {
-	var disResponse generatedV2.DisassembleResponse
-	err = client.submitForm(&disResponse, "/v2/teal/disassemble", assembled, "POST", false, true, tracers...)
-	if err != nil {
-		return nil, err
-	}
-	program = &disResponse.Result
-	if err != nil {
-		return nil, err
-	}
-	return
+// Disassemble disassembles the given program bytes and returns it inside of a DisassembleResponse
+func (client RestClient) Disassemble(assembled []byte, tracers ...*Trace) (resp generatedV2.DisassembleResponse, err error) {
+	return genericSubmit[generatedV2.DisassembleResponse](
+		client,
+		assembled,
+		"/v2/teal/disassemble",
+		"POST",
+		false, /* encodeJSON */
+		true,  /* decodeJSON */
+		tracers...)
 }
 
 func (client RestClient) doGetWithQuery(ctx context.Context, path string, queryArgs map[string]string) (result string, err error) {
@@ -719,7 +735,6 @@ func (client RestClient) LightBlockHeaderProof(round uint64) (response generated
 	err = client.get(&response, fmt.Sprintf("/v2/blocks/%d/lightheader/proof", round), nil)
 	return
 }
-
 
 // TransactionProof gets a Merkle proof for a transaction in a block.
 func (client RestClient) TransactionProof(txid string, round uint64, hashType crypto.HashType) (response generatedV2.TransactionProofResponse, err error) {

@@ -29,7 +29,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode"
 
 	"github.com/stretchr/testify/require"
 
@@ -99,16 +98,6 @@ func mutateStringAtIndex(in string, i int) (out string) {
 		out = replaceAtIndex(in, rune(randomUpperAlphaAsByte()), i)
 	}
 	return out
-}
-
-// checks whether a string is all letters-or-spaces
-func isLetterOrSpace(s string) bool {
-	for _, r := range s {
-		if !unicode.IsLetter(r) && !unicode.IsSpace(r) {
-			return false
-		}
-	}
-	return true
 }
 
 func getMaxBalAddr(t *testing.T, testClient libgoal.Client, addresses []string) (someBal uint64, someAddress string) {
@@ -545,7 +534,7 @@ func TestAccountParticipationInfo(t *testing.T) {
 		t.Error("no addr with funds")
 	}
 	a.NoError(err)
-	addr, err := basics.UnmarshalChecksumAddress(someAddress)
+	addr, _ := basics.UnmarshalChecksumAddress(someAddress)
 
 	params, err := testClient.SuggestedParams()
 	a.NoError(err)
@@ -624,7 +613,7 @@ func TestClientCanGetGoRoutines(t *testing.T) {
 	goRoutines, err := testClient.GetGoRoutines(ctx)
 	a.NoError(err)
 	a.NotEmpty(goRoutines)
-	a.True(strings.Index(goRoutines, "goroutine profile:") >= 0)
+	a.True(strings.Contains(goRoutines, "goroutine profile:"))
 }
 
 func TestSendingTooMuchFails(t *testing.T) {
@@ -990,9 +979,9 @@ end:
 int 1
 return
 `
-	ops, err := logic.AssembleString(prog)
+	ops, _ := logic.AssembleString(prog)
 	approv := ops.Program
-	ops, err = logic.AssembleString("#pragma version 5 \nint 1")
+	ops, _ = logic.AssembleString("#pragma version 5 \nint 1")
 	clst := ops.Program
 
 	gl := basics.StateSchema{}
@@ -1153,7 +1142,7 @@ func TestStateProofParticipationKeysAPI(t *testing.T) {
 	partdb, err := db.MakeErasableAccessor(filepath.Join(testClient.DataDir(), "/..", "/Wallet1.0.3000.partkey"))
 	a.NoError(err)
 
-	partkey, err := account.RestoreParticipation(partdb)
+	partkey, _ := account.RestoreParticipation(partdb)
 
 	pRoot, err := testClient.GetParticipationKeys()
 	a.NoError(err)
@@ -1227,57 +1216,4 @@ func TestNilStateProofInParticipationInfo(t *testing.T) {
 	account, err := testClient.AccountInformationV2(someAddress, false)
 	a.NoError(err)
 	a.Nil(account.Participation.StateProofKey)
-}
-
-
-/*
-go test -v github.com/algorand/go-algorand/test/e2e-go/restapi -run="TestDisassemble
-*/
-func TestDisassemble(t *testing.T) {
-	partitiontest.PartitionTest(t)
-	defer fixtures.ShutdownSynchronizedTest(t)
-
-	a := require.New(fixtures.SynchronizedTest(t))
-	var localFixture fixtures.RestClientFixture
-	localFixture.Setup(t, filepath.Join("nettemplates", "TwoNodes50Each.json"))
-	defer localFixture.Shutdown()
-
-	testClient := localFixture.LibGoalClient
-	waitForRoundOne(t, testClient)
-	wh, err := testClient.GetUnencryptedWalletHandle()
-	a.NoError(err)
-	addresses, err := testClient.ListAddresses(wh)
-	a.NoError(err)
-	_, someAddress := getMaxBalAddr(t, testClient, addresses)
-	if someAddress == "" {
-		t.Error("no addr with funds")
-	}
-	toAddress := getDestAddr(t, testClient, addresses, someAddress, wh)
-	tx, err := testClient.SendPaymentFromWallet(wh, nil, someAddress, toAddress, 10000, 100000, nil, "", 0, 0)
-	a.NoError(err)
-	txID := tx.ID()
-	rnd, err := testClient.Status()
-	a.NoError(err)
-	t.Logf("rnd[%d] created txn %s", rnd.LastRound, txID)
-	_, err = waitForTransaction(t, testClient, someAddress, txID.String(), 30*time.Second)
-	a.NoError(err)
-
-	// what is my round?
-	rnd, err = testClient.Status()
-	a.NoError(err)
-	t.Logf("rnd %d", rnd.LastRound)
-
-	// Now let's get the transaction
-
-	restClient, err := localFixture.NC.AlgodClient()
-	a.NoError(err)
-	res, err := restClient.TransactionsByAddr(toAddress, 0, rnd.LastRound, 100)
-	a.NoError(err)
-	a.Equal(1, len(res.Transactions))
-
-	for _, tx := range res.Transactions {
-		a.Equal(tx.From, someAddress)
-		a.Equal(tx.Payment.Amount, uint64(100000))
-		a.Equal(tx.Fee, uint64(10000))
-	}
 }
