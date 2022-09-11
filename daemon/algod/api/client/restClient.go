@@ -97,6 +97,8 @@ type RestClient struct {
 	versionAffinity APIVersion
 }
 
+// Trace is handy for keeping breadcrumbs of client request
+// and for creating SDK fixtures from the results
 type Trace struct {
 	Path   string `json:"path"`
 	Method string `json:"method"`
@@ -207,7 +209,7 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 			}
 			if trace {
 				// currently, trace is intended for tracing response handling, so no
-				// futher breadcrumbs provided when the raw request is malformed
+				// further breadcrumbs provided when the raw request is malformed
 				tracers[0].BytesB64 = asPtr(base64.StdEncoding.EncodeToString(reqBytes))
 			}
 			body = bytes.NewBuffer(reqBytes)

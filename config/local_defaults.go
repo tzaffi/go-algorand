@@ -126,6 +126,7 @@ var defaultLocal = Local{
 	VerifiedTranscationsCacheSize:              150000,
 }
 
+// DefaultLocal does what you think it does
 // TODO: can I use this to make setupSynchronizedREST less ugly?
 func DefaultLocal() Local {
 	return defaultLocal
