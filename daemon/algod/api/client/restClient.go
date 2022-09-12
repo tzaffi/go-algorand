@@ -100,6 +100,8 @@ type RestClient struct {
 // Trace is handy for keeping breadcrumbs of client request
 // and for creating SDK fixtures from the results
 type Trace struct {
+	Name string `json:"name"`
+
 	Path   string `json:"path"`
 	Method string `json:"method"`
 
@@ -107,7 +109,7 @@ type Trace struct {
 	BytesB64 *string `json:"bytesB64"`
 
 	// for the non-raw bytes endpoints:
-	Values *map[string][]string `json:"values"`
+	Params *map[string][]string `json:"params"`
 
 	EncodeJSON  bool    `json:"encodeJSON"`
 	DecodeJSON  bool    `json:"decodeJSON"`
@@ -219,7 +221,7 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 				return err
 			}
 			if trace {
-				tracers[0].Values = asPtr(map[string][]string(v))
+				tracers[0].Params = asPtr(map[string][]string(v))
 			}
 
 			queryURL.RawQuery = v.Encode()

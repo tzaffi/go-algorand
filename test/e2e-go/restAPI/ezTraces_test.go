@@ -18,6 +18,7 @@ package restapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -104,7 +105,7 @@ func assertNoRegressions[R any](a *require.Assertions, savedTraces []client.Trac
 		a.Equal(savedTrace.Path, liveTrace.Path)
 		a.Equal(savedTrace.Method, liveTrace.Method)
 		a.Equal(savedTrace.BytesB64, liveTrace.BytesB64)
-		a.Equal(savedTrace.Values, liveTrace.Values)
+		a.Equal(savedTrace.Params, liveTrace.Params)
 		a.Equal(savedTrace.EncodeJSON, liveTrace.EncodeJSON)
 		a.Equal(savedTrace.DecodeJSON, liveTrace.DecodeJSON)
 		a.Equal(savedTrace.StatusCode, liveTrace.StatusCode)
@@ -126,19 +127,19 @@ func traceDisassemble(a *require.Assertions, restClient client.RestClient) []cli
 
 	testProgram := []byte{}
 
-	// nil program works, but results in invalid version text.
 	trace := new(client.Trace)
+	trace.Name = "nil program works, but results in invalid version text"
 	resp, err := restClient.Disassemble(testProgram, trace)
 	liveTraces = append(liveTraces, *trace)
 	a.NoError(err)
 	a.Equal("// invalid version\n", resp.Result)
 
-	// Test a valid program across all assembler versions.
 	for ver := 1; ver <= logic.AssemblerMaxVersion; ver++ {
 		goodProgram := `int 1`
 		ops, _ := logic.AssembleStringWithVersion(goodProgram, uint64(ver))
 		disassembledProgram, _ := logic.Disassemble(ops.Program)
 		trace := new(client.Trace)
+		trace.Name = fmt.Sprintf("Test a valid program across all assembler versions (v%d)", ver)
 		resp, err = restClient.Disassemble(ops.Program, trace)
 		liveTraces = append(liveTraces, *trace)
 
@@ -150,9 +151,9 @@ func traceDisassemble(a *require.Assertions, restClient client.RestClient) []cli
 	// DeveloperAPI is assumed with intention to generate a fixture for the SDK's
 	// which currently (September 2022) use a developer enabled node for testing
 
-	// Test bad program.
 	badProgram := []byte{1, 99}
 	trace = new(client.Trace)
+	trace.Name = "Test bad program"
 	resp, err = restClient.Disassemble(badProgram, trace)
 	liveTraces = append(liveTraces, *trace)
 	a.ErrorContains(err, "invalid opcode 63 at pc=1")
