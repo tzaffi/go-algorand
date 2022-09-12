@@ -102,7 +102,7 @@ type RestClient struct {
 type Trace struct {
 	Name string `json:"name"`
 
-	Path   string `json:"path"`
+	Route  string `json:"route"`
 	Method string `json:"method"`
 
 	// only for endpoints receiving raw bytes. cf. `rawRequestPaths`:
@@ -196,7 +196,7 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	var body io.Reader
 
 	if trace {
-		tracers[0].Path = path
+		tracers[0].Route = path
 		tracers[0].Method = requestMethod
 		tracers[0].EncodeJSON = encodeJSON
 		tracers[0].DecodeJSON = decodeJSON

@@ -102,7 +102,7 @@ func assertNoRegressions[R any](a *require.Assertions, savedTraces []client.Trac
 	a.Len(liveTraces, len(savedTraces))
 	for i, savedTrace := range savedTraces {
 		liveTrace := liveTraces[i]
-		a.Equal(savedTrace.Path, liveTrace.Path)
+		a.Equal(savedTrace.Route, liveTrace.Route)
 		a.Equal(savedTrace.Method, liveTrace.Method)
 		a.Equal(savedTrace.BytesB64, liveTrace.BytesB64)
 		a.Equal(savedTrace.Params, liveTrace.Params)
