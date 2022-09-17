@@ -116,7 +116,8 @@ type Trace struct {
 	StatusCode  int     `json:"statusCode"`
 	ResponseErr *string `json:"responseErr"`
 
-	// base64 encoded response regardless of DecodeJSON:
+	// raw response (TOOD: and/or) b64 dencoded
+	Response *string 	`json:"response"`
 	ResponseB64 *string `json:"responseB64"`
 
 	// for DecodeJSON responses only:
@@ -259,6 +260,7 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 		resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
+		tracers[0].Response = asPtr(string(bodyBytes))
 		tracers[0].ResponseB64 = asPtr(base64.StdEncoding.EncodeToString(bodyBytes))
 	}
 
