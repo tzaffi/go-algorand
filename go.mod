@@ -1,6 +1,6 @@
 module github.com/algorand/go-algorand
 
-go 1.17
+go 1.19
 
 require (
 	github.com/algorand/avm-abi v0.1.0

@@ -20,7 +20,7 @@
 package config
 
 var defaultLocal = Local{
-	Version:                                    24,
+	Version:                                    23,
 	AccountUpdatesStatsInterval:                5000000000,
 	AccountsRebuildSynchronousMode:             1,
 	AgreementIncomingBundlesQueueLength:        7,
@@ -84,7 +84,6 @@ var defaultLocal = Local{
 	LogArchiveMaxAge:                           "",
 	LogArchiveName:                             "node.archive.log",
 	LogSizeLimit:                               1073741824,
-	MaxAPIBoxPerApplication:                    100000,
 	MaxAPIResourcesPerAccount:                  100000,
 	MaxAcctLookback:                            4,
 	MaxCatchpointDownloadDuration:              7200000000000,
@@ -125,4 +124,10 @@ var defaultLocal = Local{
 	TxSyncTimeoutSeconds:                       30,
 	UseXForwardedForAddressField:               "",
 	VerifiedTranscationsCacheSize:              150000,
+}
+
+// DefaultLocal does what you think it does
+// TODO: can I use this to make setupSynchronizedREST less ugly?
+func DefaultLocal() Local {
+	return defaultLocal
 }
