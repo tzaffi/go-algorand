@@ -102,8 +102,9 @@ type RestClient struct {
 type Trace struct {
 	Name string `json:"name"`
 
-	Route  string `json:"route"`
-	Method string `json:"method"`
+	Path     string `json:"path"`
+	Resource string `json:"resource"`
+	Method   string `json:"method"`
 
 	// only for endpoints receiving raw bytes. cf. `rawRequestPaths`:
 	BytesB64 *string `json:"bytesB64"`
@@ -197,7 +198,7 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	var body io.Reader
 
 	if trace {
-		tracers[0].Route = path
+		tracers[0].Path = path
 		tracers[0].Method = requestMethod
 		tracers[0].EncodeJSON = encodeJSON
 		tracers[0].DecodeJSON = decodeJSON
@@ -233,6 +234,9 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 		}
 	}
 
+	if trace {
+		tracers[0].Resource = queryURL.String()
+	}
 	req, err = http.NewRequest(requestMethod, queryURL.String(), body)
 	if err != nil {
 		return err
@@ -300,8 +304,8 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	return nil
 }
 
-func genericSubmit[R any](client RestClient, bytes []byte, route, method string, encodeJSON, decodeJSON bool, tracers ...*Trace) (resp R, err error) {
-	err = client.submitForm(&resp, "/v2/teal/disassemble", bytes, method, encodeJSON, decodeJSON, tracers...)
+func genericSubmit[R any](client RestClient, bytes []byte, path, method string, encodeJSON, decodeJSON bool, tracers ...*Trace) (resp R, err error) {
+	err = client.submitForm(&resp, path, bytes, method, encodeJSON, decodeJSON, tracers...)
 	return
 }
 
