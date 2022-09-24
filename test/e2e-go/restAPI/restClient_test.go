@@ -29,7 +29,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode"
 
 	"github.com/stretchr/testify/require"
 
@@ -99,16 +98,6 @@ func mutateStringAtIndex(in string, i int) (out string) {
 		out = replaceAtIndex(in, rune(randomUpperAlphaAsByte()), i)
 	}
 	return out
-}
-
-// checks whether a string is all letters-or-spaces
-func isLetterOrSpace(s string) bool {
-	for _, r := range s {
-		if !unicode.IsLetter(r) && !unicode.IsSpace(r) {
-			return false
-		}
-	}
-	return true
 }
 
 func getMaxBalAddr(t *testing.T, testClient libgoal.Client, addresses []string) (someBal uint64, someAddress string) {
@@ -545,7 +534,7 @@ func TestAccountParticipationInfo(t *testing.T) {
 		t.Error("no addr with funds")
 	}
 	a.NoError(err)
-	addr, err := basics.UnmarshalChecksumAddress(someAddress)
+	addr, _ := basics.UnmarshalChecksumAddress(someAddress)
 
 	params, err := testClient.SuggestedParams()
 	a.NoError(err)
@@ -624,7 +613,7 @@ func TestClientCanGetGoRoutines(t *testing.T) {
 	goRoutines, err := testClient.GetGoRoutines(ctx)
 	a.NoError(err)
 	a.NotEmpty(goRoutines)
-	a.True(strings.Index(goRoutines, "goroutine profile:") >= 0)
+	a.True(strings.Contains(goRoutines, "goroutine profile:"))
 }
 
 func TestSendingTooMuchFails(t *testing.T) {
@@ -990,9 +979,9 @@ end:
 int 1
 return
 `
-	ops, err := logic.AssembleString(prog)
+	ops, _ := logic.AssembleString(prog)
 	approv := ops.Program
-	ops, err = logic.AssembleString("#pragma version 5 \nint 1")
+	ops, _ = logic.AssembleString("#pragma version 5 \nint 1")
 	clst := ops.Program
 
 	gl := basics.StateSchema{}
@@ -1153,7 +1142,7 @@ func TestStateProofParticipationKeysAPI(t *testing.T) {
 	partdb, err := db.MakeErasableAccessor(filepath.Join(testClient.DataDir(), "/..", "/Wallet1.0.3000.partkey"))
 	a.NoError(err)
 
-	partkey, err := account.RestoreParticipation(partdb)
+	partkey, _ := account.RestoreParticipation(partdb)
 
 	pRoot, err := testClient.GetParticipationKeys()
 	a.NoError(err)

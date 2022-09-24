@@ -67,3 +67,9 @@ index.html
 
 # test summary
 testresults.json
+
+# ASDF
+.tool-versions
+
+# ezTraces artifacts
+_*.json

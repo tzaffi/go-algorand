@@ -18,7 +18,6 @@ package fixtures
 
 import (
 	"fmt"
-	"github.com/algorand/go-algorand/data/basics"
 	"sort"
 	"time"
 	"unicode"
@@ -27,6 +26,7 @@ import (
 
 	"github.com/algorand/go-algorand/daemon/algod/api/client"
 	v1 "github.com/algorand/go-algorand/daemon/algod/api/spec/v1"
+	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/libgoal"
 	"github.com/algorand/go-algorand/nodecontrol"
 	"github.com/algorand/go-algorand/test/e2e-go/globals"
@@ -62,6 +62,32 @@ func (f *RestClientFixture) Start() {
 	f.LibGoalFixture.Start()
 	f.AlgodClient = f.GetAlgodClientForController(f.NC)
 }
+
+/* comment out because of lint errors
+// StartWithLocalConfig is a hack that I'm not sure about...
+// TODO: this is probably useless. Don't merge until I figured that out.
+func (f *RestClientFixture) StartWithLocalConfig(t TestingTB, templateFile string, cfg config.Local) {
+	f.SetupNoStart(t, templateFile)
+
+	primaryNode, err := f.GetNodeController("Primary")
+	require.NoError(t, err)
+
+	// TODO: do I really need this start-stop hack ?
+	f.Start()
+	defer primaryNode.FullStop()
+
+	primaryNode.FullStop()
+
+	// tmp
+	d1 := primaryNode.GetDataDir()
+	cfg, err = config.LoadConfigFromDisk(d1)
+	require.NoError(t, err)
+	cfg.EnableDeveloperAPI = true
+	d2 := primaryNode.GetDataDir()
+	cfg.SaveToDisk(d2)
+	f.Start()
+}
+*/
 
 // GetAlgodClientForController returns a RestClient for the specified NodeController
 func (f *RestClientFixture) GetAlgodClientForController(nc nodecontrol.NodeController) client.RestClient {
@@ -139,7 +165,7 @@ func (f *RestClientFixture) ClientWaitForRoundWithTimeout(client client.RestClie
 			}
 		case <-time.After(roundTime):
 			// we've timed out.
-			time := time.Now().Sub(roundStarted)
+			time := time.Since(roundStarted)
 			return fmt.Errorf("fixture.WaitForRound took %3.2f seconds between round %d and %d", time.Seconds(), lastRound, nextRound)
 		}
 
