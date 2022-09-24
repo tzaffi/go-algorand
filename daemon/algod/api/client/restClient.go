@@ -235,7 +235,7 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	}
 
 	if trace {
-		tracers[0].Resource = queryURL.String()
+		tracers[0].Resource = queryURL.RequestURI()
 	}
 	req, err = http.NewRequest(requestMethod, queryURL.String(), body)
 	if err != nil {

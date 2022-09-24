@@ -1,7 +1,8 @@
 [
   {
     "name": "nil program works, but results in invalid version text",
-    "route": "/v2/teal/disassemble",
+    "path": "/v2/teal/disassemble",
+    "resource": "/v2/teal/disassemble",
     "method": "POST",
     "bytesB64": "",
     "params": null,
@@ -18,7 +19,8 @@
   },
   {
     "name": "Test a valid program across all assembler versions (v1)",
-    "route": "/v2/teal/disassemble",
+    "path": "/v2/teal/disassemble",
+    "resource": "/v2/teal/disassemble",
     "method": "POST",
     "bytesB64": "ASABASI=",
     "params": null,
@@ -35,7 +37,8 @@
   },
   {
     "name": "Test a valid program across all assembler versions (v2)",
-    "route": "/v2/teal/disassemble",
+    "path": "/v2/teal/disassemble",
+    "resource": "/v2/teal/disassemble",
     "method": "POST",
     "bytesB64": "AiABASI=",
     "params": null,
@@ -52,7 +55,8 @@
   },
   {
     "name": "Test a valid program across all assembler versions (v3)",
-    "route": "/v2/teal/disassemble",
+    "path": "/v2/teal/disassemble",
+    "resource": "/v2/teal/disassemble",
     "method": "POST",
     "bytesB64": "AyABASI=",
     "params": null,
@@ -69,7 +73,8 @@
   },
   {
     "name": "Test a valid program across all assembler versions (v4)",
-    "route": "/v2/teal/disassemble",
+    "path": "/v2/teal/disassemble",
+    "resource": "/v2/teal/disassemble",
     "method": "POST",
     "bytesB64": "BIEB",
     "params": null,
@@ -86,7 +91,8 @@
   },
   {
     "name": "Test a valid program across all assembler versions (v5)",
-    "route": "/v2/teal/disassemble",
+    "path": "/v2/teal/disassemble",
+    "resource": "/v2/teal/disassemble",
     "method": "POST",
     "bytesB64": "BYEB",
     "params": null,
@@ -103,7 +109,8 @@
   },
   {
     "name": "Test a valid program across all assembler versions (v6)",
-    "route": "/v2/teal/disassemble",
+    "path": "/v2/teal/disassemble",
+    "resource": "/v2/teal/disassemble",
     "method": "POST",
     "bytesB64": "BoEB",
     "params": null,
@@ -120,7 +127,8 @@
   },
   {
     "name": "Test a valid program across all assembler versions (v7)",
-    "route": "/v2/teal/disassemble",
+    "path": "/v2/teal/disassemble",
+    "resource": "/v2/teal/disassemble",
     "method": "POST",
     "bytesB64": "B4EB",
     "params": null,
@@ -137,7 +145,8 @@
   },
   {
     "name": "Test a valid program across all assembler versions (v8)",
-    "route": "/v2/teal/disassemble",
+    "path": "/v2/teal/disassemble",
+    "resource": "/v2/teal/disassemble",
     "method": "POST",
     "bytesB64": "CIEB",
     "params": null,
@@ -154,7 +163,8 @@
   },
   {
     "name": "Test bad program",
-    "route": "/v2/teal/disassemble",
+    "path": "/v2/teal/disassemble",
+    "resource": "/v2/teal/disassemble",
     "method": "POST",
     "bytesB64": "AWM=",
     "params": null,
