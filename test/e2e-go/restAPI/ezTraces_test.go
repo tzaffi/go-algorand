@@ -32,6 +32,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type tracerTest func(a *require.Assertions, ac algodClient.RestClient, gc libgoal.Client) []daemon.Trace
+
 // type Client interface {algodClient.RestClient | kmdClient.KMDClient | libgoal.Client}
 
 const tracesDirectory = "ezTraces"
@@ -100,6 +102,10 @@ func unmarshal[R any](a *require.Assertions, readBytes []byte) (r R) {
 func recoverType[R any](a *require.Assertions, r interface{}) R {
 	return unmarshal[R](a, marshal(a, r))
 }
+
+// var handledTypes map[string]reflect.Type{
+// 	"*generated.DisassembleResponse": *generated.DisassembleResponse
+// }
 
 func assertNoRegressions(a *require.Assertions, savedTraces []daemon.Trace, liveTraces []daemon.Trace) {
 	a.Len(liveTraces, len(savedTraces))

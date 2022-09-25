@@ -48,8 +48,6 @@ func traceDisassemble(a *require.Assertions, ac algodClient.RestClient, _ libgoa
 	return liveTraces
 }
 
-type tracerTest func(a *require.Assertions, ac algodClient.RestClient, gc libgoal.Client) []daemon.Trace
-
 
 /*
 go test -v github.com/algorand/go-algorand/test/e2e-go/restapi -run="TestDisassemble"
