@@ -18,6 +18,7 @@ package restapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,7 +35,49 @@ import (
 
 type tracerTest func(t *testing.T, a *require.Assertions, ac algodClient.RestClient, gc libgoal.Client) []daemon.Trace
 
-// type Client interface {algodClient.RestClient | kmdClient.KMDClient | libgoal.Client}
+// Set inspired by: https://dbuddy.medium.com/implementing-set-data-structure-in-go-using-generics-4a967f823bfb
+
+type Set[T comparable] map[T]bool
+
+func NewSet[T comparable]() Set[T] {
+	return make(Set[T])
+}
+func AsSet[T comparable](elts ...T) (s Set[T]) {
+	s = NewSet[T]()
+	for _, elt := range elts {
+		s[elt] = true
+	}
+	return
+}
+func AsSetOfStrings[T any](elts ...T)(s Set[string]){
+	eltStrings := make([]string, len(elts))
+	for _, elt := range elts {
+		eltStrings = append(eltStrings, fmt.Sprintf("%+v", elt))
+	}
+	return AsSet(eltStrings...)
+}
+
+func Minus[T comparable](s1, s2 Set[T]) Set[T] {
+	minus := []T{}
+	for x := range s1 {
+		if !s2[x] {
+			minus = append(minus, x)
+		}
+	}
+	return AsSet(minus...)
+}
+
+func Equal[T comparable](s1, s2 Set[T]) bool {
+	if len(s1) != len(s2) {
+		return false
+	}
+	for x := range s1 {
+		if !s2[x] {
+			return false
+		}
+	}
+	return true
+}
 
 const tracesDirectory = "ezTraces"
 
@@ -111,28 +154,67 @@ func assertNoRegressions(a *require.Assertions, savedTraces []daemon.Trace, live
 	a.Len(liveTraces, len(savedTraces))
 	for i, savedTrace := range savedTraces {
 		liveTrace := liveTraces[i]
-		a.Equal(savedTrace.Daemon, liveTrace.Daemon)
-		a.Equal(savedTrace.Name, liveTrace.Name)
-		a.Equal(savedTrace.Path, liveTrace.Path)
-		a.Equal(savedTrace.Resource, liveTrace.Resource)
-		a.Equal(savedTrace.Method, liveTrace.Method)
-		a.Equal(savedTrace.BytesB64, liveTrace.BytesB64)
-		a.Equal(savedTrace.Params, liveTrace.Params)
-		a.Equal(savedTrace.EncodeJSON, liveTrace.EncodeJSON)
-		a.Equal(savedTrace.DecodeJSON, liveTrace.DecodeJSON)
-		a.Equal(savedTrace.StatusCode, liveTrace.StatusCode)
-		a.Equal(savedTrace.ResponseErr, liveTrace.ResponseErr)
-		a.Equal(savedTrace.Response, liveTrace.Response)
-		a.Equal(savedTrace.ResponseB64, liveTrace.ResponseB64)
-		a.Equal(savedTrace.ParsedResponseType, liveTrace.ParsedResponseType)
+		msg := fmt.Sprintf("%d. %s", i, liveTrace.Name)
+		e := func(x, y interface{}){
+			a.Equal(x, y, msg)
+		}
 
+		e(savedTrace.Daemon, liveTrace.Daemon)
+		e(savedTrace.Name, liveTrace.Name)
+		e(savedTrace.Path, liveTrace.Path)
+		e(savedTrace.Resource, liveTrace.Resource)
+		e(savedTrace.Method, liveTrace.Method)
+		e(savedTrace.BytesB64, liveTrace.BytesB64)
+		e(savedTrace.Params, liveTrace.Params)
+		e(savedTrace.EncodeJSON, liveTrace.EncodeJSON)
+		e(savedTrace.DecodeJSON, liveTrace.DecodeJSON)
+		e(savedTrace.StatusCode, liveTrace.StatusCode)
+		e(savedTrace.ResponseErr, liveTrace.ResponseErr)
+		e(savedTrace.ParsedResponseType, liveTrace.ParsedResponseType)
+
+		equals, hasCustomEquals := customEquals[savedTrace.ParsedResponseType]
+
+		if !hasCustomEquals {
+			e(savedTrace.Response, liveTrace.Response)
+			e(savedTrace.ResponseB64, liveTrace.ResponseB64)	
+		} 
+		
 		if savedTrace.ParsedResponse == nil {
-			a.Nil(liveTrace.ParsedResponse)
+			a.Nil(liveTrace.ParsedResponse, msg)
 		} else {
 			recovered := recoverResponse(a, savedTrace)
-			a.Equal(recovered, liveTrace.ParsedResponse)
+			if !hasCustomEquals {
+				e(recovered, liveTrace.ParsedResponse)
+			} else {
+				equals(a, recovered, liveTrace.ParsedResponse, msg)
+			}
 		}
 	}
+}
+
+type equalityAsserter func(a *require.Assertions, x, y any, msgEtc ...interface{})
+
+
+var customEquals = map[string]equalityAsserter{
+	"*generated.BoxesResponse": func(a *require.Assertions, x, y any, msgEtc ...interface{}) {
+		xbr, ok := x.(*generated.BoxesResponse)
+		a.True(ok)
+		ybr, ok := y.(*generated.BoxesResponse)
+		a.True(ok)
+
+		xSet := AsSetOfStrings(xbr.Boxes...)
+		ySet := AsSetOfStrings(ybr.Boxes...)
+		
+		xyMinus := Minus(xSet, ySet)
+		a.Empty(xyMinus, msgEtc...)
+
+		yxMinus := Minus(ySet, xSet)
+		a.Empty(yxMinus, msgEtc...)
+
+		preamble := fmt.Sprintf("not equal as set of BoxDescriptor's: lengths %d v %d\ndetails:\n{%+v}\nvs\n{%+v}", len(xSet), len(ySet), xSet, ySet)
+		msgEtc = append([]interface{}{preamble}, msgEtc...)
+		a.True(Equal(xSet, ySet), msgEtc...)
+	},
 }
 
 func recoverResponse(a *require.Assertions, savedTrace daemon.Trace) (recovered any) {

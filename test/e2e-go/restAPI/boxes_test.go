@@ -339,7 +339,6 @@ end:
 go test -v github.com/algorand/go-algorand/test/e2e-go/restapi -run="TestBoxes"
 */
 
-
 func TestBoxes(t *testing.T) {
 	tracingTest(t, traceBoxes, false /* developerAPI */, "boxes.json")
 }
