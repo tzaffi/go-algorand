@@ -1,5 +1,6 @@
 [
   {
+    "daemon": "algod",
     "name": "nil program works, but results in invalid version text",
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
@@ -18,6 +19,7 @@
     }
   },
   {
+    "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v1)",
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
@@ -36,6 +38,7 @@
     }
   },
   {
+    "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v2)",
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
@@ -54,6 +57,7 @@
     }
   },
   {
+    "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v3)",
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
@@ -72,6 +76,7 @@
     }
   },
   {
+    "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v4)",
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
@@ -90,6 +95,7 @@
     }
   },
   {
+    "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v5)",
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
@@ -108,6 +114,7 @@
     }
   },
   {
+    "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v6)",
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
@@ -126,6 +133,7 @@
     }
   },
   {
+    "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v7)",
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
@@ -144,6 +152,7 @@
     }
   },
   {
+    "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v8)",
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
@@ -162,6 +171,7 @@
     }
   },
   {
+    "daemon": "algod",
     "name": "Test bad program",
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",

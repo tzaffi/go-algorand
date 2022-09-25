@@ -29,6 +29,7 @@ import (
 
 	"github.com/google/go-querystring/query"
 
+	"github.com/algorand/go-algorand/daemon"
 	generatedV2 "github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated"
 	privateV2 "github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated/private"
 
@@ -95,36 +96,21 @@ type RestClient struct {
 	serverURL       url.URL
 	apiToken        string
 	versionAffinity APIVersion
+	trace 			*daemon.Trace
 }
 
-// Trace is handy for keeping breadcrumbs of client request
-// and for creating SDK fixtures from the results
-type Trace struct {
-	Name string `json:"name"`
-
-	Path     string `json:"path"`
-	Resource string `json:"resource"`
-	Method   string `json:"method"`
-
-	// only for endpoints receiving raw bytes. cf. `rawRequestPaths`:
-	BytesB64 *string `json:"bytesB64"`
-
-	// for the non-raw bytes endpoints:
-	Params *map[string][]string `json:"params"`
-
-	EncodeJSON  bool    `json:"encodeJSON"`
-	DecodeJSON  bool    `json:"decodeJSON"`
-	StatusCode  int     `json:"statusCode"`
-	ResponseErr *string `json:"responseErr"`
-
-	// raw response (TOOD: and/or) b64 dencoded
-	Response *string 	`json:"response"`
-	ResponseB64 *string `json:"responseB64"`
-
-	// for DecodeJSON responses only:
-	ParsedResponseType string      `json:"parsedResponseGoType"`
-	ParsedResponse     interface{} `json:"parsedResponse"`
+func (c *RestClient) StartTrace(nameFmt string, parts ...any) {
+	c.trace = &daemon.Trace{Daemon: "algod", Name: fmt.Sprintf(nameFmt, parts...)}
 }
+
+func (c *RestClient) Trace() *daemon.Trace {
+	return c.trace
+}
+
+func (c *RestClient) Tracing() bool {
+	return c.trace != nil
+}
+
 
 func asPtr[T any](t T) *T {
 	return &t
@@ -188,21 +174,20 @@ func stripTransaction(tx string) string {
 }
 
 // submitForm is a helper used for submitting (ex.) GETs and POSTs to the server
-func (client RestClient) submitForm(response interface{}, path string, request interface{}, requestMethod string, encodeJSON bool, decodeJSON bool, tracers ...*Trace) error {
-	trace := len(tracers) > 0
-
+func (client RestClient) submitForm(response interface{}, path string, request interface{}, requestMethod string, encodeJSON bool, decodeJSON bool) error {
 	var err error
 	queryURL := client.serverURL
 	queryURL.Path = path
 	var req *http.Request
 	var body io.Reader
 
-	if trace {
-		tracers[0].Path = path
-		tracers[0].Method = requestMethod
-		tracers[0].EncodeJSON = encodeJSON
-		tracers[0].DecodeJSON = decodeJSON
-		tracers[0].ParsedResponseType = fmt.Sprintf("%T", response)
+	trace := client.trace
+	if trace != nil {
+		trace.Path = path
+		trace.Method = requestMethod
+		trace.EncodeJSON = encodeJSON
+		trace.DecodeJSON = decodeJSON
+		trace.ParsedResponseType = fmt.Sprintf("%T", response)
 	}
 
 	if request != nil {
@@ -211,10 +196,10 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 			if !ok {
 				return fmt.Errorf("couldn't decode raw request as bytes")
 			}
-			if trace {
+			if trace != nil {
 				// currently, trace is intended for tracing response handling, so no
 				// further breadcrumbs provided when the raw request is malformed
-				tracers[0].BytesB64 = asPtr(base64.StdEncoding.EncodeToString(reqBytes))
+				trace.BytesB64 = asPtr(base64.StdEncoding.EncodeToString(reqBytes))
 			}
 			body = bytes.NewBuffer(reqBytes)
 		} else {
@@ -222,8 +207,8 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 			if err != nil {
 				return err
 			}
-			if trace {
-				tracers[0].Params = asPtr(map[string][]string(v))
+			if trace != nil {
+				trace.Params = asPtr(map[string][]string(v))
 			}
 
 			queryURL.RawQuery = v.Encode()
@@ -234,8 +219,8 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 		}
 	}
 
-	if trace {
-		tracers[0].Resource = queryURL.RequestURI()
+	if trace != nil {
+		trace.Resource = queryURL.RequestURI()
 	}
 	req, err = http.NewRequest(requestMethod, queryURL.String(), body)
 	if err != nil {
@@ -251,21 +236,21 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		if trace {
-			tracers[0].ResponseErr = asPtr(err.Error())
+		if trace != nil {
+			trace.ResponseErr = asPtr(err.Error())
 		}
 		return err
 	}
 
-	if trace {
-		tracers[0].StatusCode = resp.StatusCode
+	if trace != nil {
+		trace.StatusCode = resp.StatusCode
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
-		tracers[0].Response = asPtr(string(bodyBytes))
-		tracers[0].ResponseB64 = asPtr(base64.StdEncoding.EncodeToString(bodyBytes))
+		trace.Response = asPtr(string(bodyBytes))
+		trace.ResponseB64 = asPtr(base64.StdEncoding.EncodeToString(bodyBytes))
 	}
 
 	// Ensure response isn't too large
@@ -274,8 +259,8 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 
 	err = extractError(resp)
 	if err != nil {
-		if trace {
-			tracers[0].ResponseErr = asPtr(err.Error())
+		if trace != nil {
+			trace.ResponseErr = asPtr(err.Error())
 		}
 		return err
 	}
@@ -283,8 +268,8 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	if decodeJSON {
 		dec := json.NewDecoder(resp.Body)
 		err := dec.Decode(&response)
-		if trace {
-			tracers[0].ParsedResponse = response
+		if trace != nil {
+			trace.ParsedResponse = response
 		}
 		return err
 	}
@@ -304,8 +289,8 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	return nil
 }
 
-func genericSubmit[R any](client RestClient, bytes []byte, path, method string, encodeJSON, decodeJSON bool, tracers ...*Trace) (resp R, err error) {
-	err = client.submitForm(&resp, path, bytes, method, encodeJSON, decodeJSON, tracers...)
+func genericSubmit[R any](client RestClient, bytes []byte, path, method string, encodeJSON, decodeJSON bool) (resp R, err error) {
+	err = client.submitForm(&resp, path, bytes, method, encodeJSON, decodeJSON)
 	return
 }
 
@@ -710,15 +695,14 @@ func (client RestClient) Compile(program []byte) (compiledProgram []byte, progra
 }
 
 // Disassemble disassembles the given program bytes and returns it inside of a DisassembleResponse
-func (client RestClient) Disassemble(assembled []byte, tracers ...*Trace) (resp generatedV2.DisassembleResponse, err error) {
+func (client RestClient) Disassemble(assembled []byte) (resp generatedV2.DisassembleResponse, err error) {
 	return genericSubmit[generatedV2.DisassembleResponse](
 		client,
 		assembled,
 		"/v2/teal/disassemble",
 		"POST",
 		false, /* encodeJSON */
-		true,  /* decodeJSON */
-		tracers...)
+		true,  /* decodeJSON */)
 }
 
 func (client RestClient) doGetWithQuery(ctx context.Context, path string, queryArgs map[string]string) (result string, err error) {
