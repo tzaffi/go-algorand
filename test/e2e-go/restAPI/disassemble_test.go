@@ -11,7 +11,7 @@ import (
 )
 
 // Customized request tracer for `Disassemble()`:
-func traceDisassemble(a *require.Assertions, ac algodClient.RestClient, _ libgoal.Client) []daemon.Trace {
+func traceDisassemble(t *testing.T, a *require.Assertions, ac algodClient.RestClient, _ libgoal.Client) []daemon.Trace {
 	liveTraces := []daemon.Trace{}
 
 	testProgram := []byte{}

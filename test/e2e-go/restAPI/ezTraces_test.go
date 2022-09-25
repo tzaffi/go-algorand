@@ -32,7 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type tracerTest func(a *require.Assertions, ac algodClient.RestClient, gc libgoal.Client) []daemon.Trace
+type tracerTest func(t *testing.T, a *require.Assertions, ac algodClient.RestClient, gc libgoal.Client) []daemon.Trace
 
 // type Client interface {algodClient.RestClient | kmdClient.KMDClient | libgoal.Client}
 
@@ -129,16 +129,25 @@ func assertNoRegressions(a *require.Assertions, savedTraces []daemon.Trace, live
 		if savedTrace.ParsedResponse == nil {
 			a.Nil(liveTrace.ParsedResponse)
 		} else {
-			var recovered any
-			switch savedTrace.ParsedResponseType {
-			case "*generated.DisassembleResponse":
-				recovered = recoverType[*generated.DisassembleResponse](a, savedTrace.ParsedResponse)
-			default:
-				a.Fail("unknown savedTrace.ParsedResponseType %s", savedTrace.ParsedResponseType)
-			}
+			recovered := recoverResponse(a, savedTrace)
 			a.Equal(recovered, liveTrace.ParsedResponse)
 		}
 	}
+}
+
+func recoverResponse(a *require.Assertions, savedTrace daemon.Trace) (recovered any) {
+	parsed := savedTrace.ParsedResponse
+	switch savedTrace.ParsedResponseType {
+	case "*generated.DisassembleResponse":
+		recovered = recoverType[*generated.DisassembleResponse](a, parsed)
+	case "*generated.BoxesResponse":
+		recovered = recoverType[*generated.BoxesResponse](a, parsed)
+	case "*generated.BoxResponse":
+		recovered = recoverType[*generated.BoxResponse](a, parsed)
+	default:
+		a.Fail("unknown savedTrace.ParsedResponseType %s", savedTrace.ParsedResponseType)
+	}
+	return
 }
 
 // The trace results are saved in ./{tracesDirectory}/_{ezTracesFile}
@@ -148,7 +157,7 @@ func tracingTest(t *testing.T, tracer tracerTest, developerAPI bool, tracesFile 
 	a, algodClient, goalClient, shutDown := SetupTraces(t, developerAPI)
 	defer shutDown()
 
-	liveTraces := tracer(a, algodClient, goalClient)
+	liveTraces := tracer(t, a, algodClient, goalClient)
 
 	// Save the traces to a non source controlled file:
 	writeTraces(a, liveTraces, "_"+tracesFile)

@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/algorand/go-algorand/daemon"
 	algodclient "github.com/algorand/go-algorand/daemon/algod/api/client"
 	v2 "github.com/algorand/go-algorand/daemon/algod/api/server/v2"
 	generatedV2 "github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated"
@@ -66,7 +67,22 @@ type Client struct {
 	suggestedParamsCache  v1.TransactionParams
 	suggestedParamsExpire time.Time
 	suggestedParamsMaxAge time.Duration
+
+	trace *daemon.Trace
 }
+
+func (c *Client) StartTrace(nameFmt string, parts ...any) {
+	c.trace = &daemon.Trace{Daemon: "goal", Name: fmt.Sprintf(nameFmt, parts...)}
+}
+
+func (c *Client) Trace() *daemon.Trace {
+	return c.trace
+}
+
+func (c *Client) Tracing() bool {
+	return c.trace != nil
+}
+
 
 // ClientConfig is data to configure a Client
 type ClientConfig struct {
@@ -205,6 +221,10 @@ func (c *Client) ensureAlgodClient() (*algodclient.RestClient, error) {
 		return nil, err
 	}
 	algod.SetAPIVersionAffinity(c.algodVersionAffinity)
+	if c.Tracing() {
+		c.trace.Name = fmt.Sprintf("goal-algod: %s", c.trace.Name)
+		algod.SetTrace(c.trace)
+	}
 	return &algod, err
 }
 

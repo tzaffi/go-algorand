@@ -103,6 +103,11 @@ func (c *RestClient) StartTrace(nameFmt string, parts ...any) {
 	c.trace = &daemon.Trace{Daemon: "algod", Name: fmt.Sprintf(nameFmt, parts...)}
 }
 
+func (c *RestClient) SetTrace(trace *daemon.Trace) {
+	c.trace = trace
+}
+
+
 func (c *RestClient) Trace() *daemon.Trace {
 	return c.trace
 }
