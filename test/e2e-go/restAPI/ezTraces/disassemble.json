@@ -2,6 +2,7 @@
   {
     "daemon": "algod",
     "name": "nil program works, but results in invalid version text",
+    "volatile": false,
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
     "method": "POST",
@@ -20,11 +21,13 @@
       "result": "// invalid version\n"
     },
     "requestComparator": 0,
-    "responseComparator": 0
+    "responseComparator": 0,
+    "counter": 1
   },
   {
     "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v1)",
+    "volatile": false,
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
     "method": "POST",
@@ -43,11 +46,13 @@
       "result": "#pragma version 1\nintcblock 1\nintc_0 // 1\n"
     },
     "requestComparator": 0,
-    "responseComparator": 0
+    "responseComparator": 0,
+    "counter": 2
   },
   {
     "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v2)",
+    "volatile": false,
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
     "method": "POST",
@@ -66,11 +71,13 @@
       "result": "#pragma version 2\nintcblock 1\nintc_0 // 1\n"
     },
     "requestComparator": 0,
-    "responseComparator": 0
+    "responseComparator": 0,
+    "counter": 3
   },
   {
     "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v3)",
+    "volatile": false,
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
     "method": "POST",
@@ -89,11 +96,13 @@
       "result": "#pragma version 3\nintcblock 1\nintc_0 // 1\n"
     },
     "requestComparator": 0,
-    "responseComparator": 0
+    "responseComparator": 0,
+    "counter": 4
   },
   {
     "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v4)",
+    "volatile": false,
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
     "method": "POST",
@@ -112,11 +121,13 @@
       "result": "#pragma version 4\npushint 1\n"
     },
     "requestComparator": 0,
-    "responseComparator": 0
+    "responseComparator": 0,
+    "counter": 5
   },
   {
     "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v5)",
+    "volatile": false,
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
     "method": "POST",
@@ -135,11 +146,13 @@
       "result": "#pragma version 5\npushint 1\n"
     },
     "requestComparator": 0,
-    "responseComparator": 0
+    "responseComparator": 0,
+    "counter": 6
   },
   {
     "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v6)",
+    "volatile": false,
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
     "method": "POST",
@@ -158,11 +171,13 @@
       "result": "#pragma version 6\npushint 1\n"
     },
     "requestComparator": 0,
-    "responseComparator": 0
+    "responseComparator": 0,
+    "counter": 7
   },
   {
     "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v7)",
+    "volatile": false,
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
     "method": "POST",
@@ -181,11 +196,13 @@
       "result": "#pragma version 7\npushint 1\n"
     },
     "requestComparator": 0,
-    "responseComparator": 0
+    "responseComparator": 0,
+    "counter": 8
   },
   {
     "daemon": "algod",
     "name": "Test a valid program across all assembler versions (v8)",
+    "volatile": false,
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
     "method": "POST",
@@ -204,11 +221,13 @@
       "result": "#pragma version 8\npushint 1\n"
     },
     "requestComparator": 0,
-    "responseComparator": 0
+    "responseComparator": 0,
+    "counter": 9
   },
   {
     "daemon": "algod",
     "name": "Test bad program",
+    "volatile": false,
     "path": "/v2/teal/disassemble",
     "resource": "/v2/teal/disassemble",
     "method": "POST",
@@ -225,6 +244,7 @@
     "parsedResponseGoType": "*generated.DisassembleResponse",
     "parsedResponse": null,
     "requestComparator": 0,
-    "responseComparator": 0
+    "responseComparator": 0,
+    "counter": 10
   }
 ]

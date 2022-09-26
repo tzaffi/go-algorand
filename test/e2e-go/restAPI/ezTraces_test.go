@@ -123,7 +123,12 @@ func SetupTraces(t *testing.T, enableDeveloperAPI bool) (*require.Assertions, al
 }
 
 
-func writeTraces(a *require.Assertions, traces []daemon.Trace, filename string) {
+func writeTraces(a *require.Assertions, traces []daemon.Trace, filename string, addCounter bool) {
+	if addCounter {
+		for i := range traces {
+			traces[i].Counter = int64(i+1)
+		}
+	}
 	writeBytes := marshal(a, traces)
 	err := os.WriteFile(filepath.Join(tracesDirectory, filename), writeBytes, 0644)
 	a.NoError(err)
@@ -281,7 +286,7 @@ func tracingTest(t *testing.T, tracer tracerTest, developerAPI bool, tracesFile 
 	liveTraces := tracer(t, a, algodClient, goalClient)
 
 	// Save the traces to a non source controlled file:
-	writeTraces(a, liveTraces, "_"+tracesFile)
+	writeTraces(a, liveTraces, "_"+tracesFile, true /* addCounter */)
 
 	// Read the source controlled traces file:
 	savedTraces := readTraces(a, tracesFile)

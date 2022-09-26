@@ -63,4 +63,6 @@ type Trace struct {
 
 	RequestComparator TraceComparison `json:"requestComparator"`
 	ResponseComparator TraceComparison `json:"responseComparator"`
+	
+	Counter int64 `json:"counter"`
 }
