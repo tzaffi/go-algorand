@@ -107,7 +107,6 @@ func (c *RestClient) SetTrace(trace *daemon.Trace) {
 	c.trace = trace
 }
 
-
 func (c *RestClient) Trace() *daemon.Trace {
 	return c.trace
 }
@@ -115,7 +114,6 @@ func (c *RestClient) Trace() *daemon.Trace {
 func (c *RestClient) Tracing() bool {
 	return c.trace != nil
 }
-
 
 func asPtr[T any](t T) *T {
 	return &t
@@ -275,6 +273,9 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 		err := dec.Decode(&response)
 		if trace != nil {
 			trace.ParsedResponse = response
+			if err != nil {
+				trace.ResponseErr = asPtr(err.Error())
+			}
 		}
 		return err
 	}

@@ -27,6 +27,7 @@ import (
 	"github.com/algorand/go-algorand/daemon"
 	algodClient "github.com/algorand/go-algorand/daemon/algod/api/client"
 	"github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated"
+	v1 "github.com/algorand/go-algorand/daemon/algod/api/spec/v1"
 	"github.com/algorand/go-algorand/libgoal"
 	"github.com/algorand/go-algorand/test/framework/fixtures"
 	"github.com/algorand/go-algorand/test/partitiontest"
@@ -161,8 +162,10 @@ func recoverResponse(a *require.Assertions, trace daemon.Trace) (recovered inter
 		recovered = recoverType[*generated.BoxesResponse](a, parsed)
 	case "*generated.BoxResponse":
 		recovered = recoverType[*generated.BoxResponse](a, parsed)
+	case "*v1.NodeStatus":
+		recovered = recoverType[*v1.NodeStatus](a, parsed)
 	default:
-		a.Fail("unknown savedTrace.ParsedResponseType %s", trace.ParsedResponseType)
+		a.Fail(fmt.Sprintf("unknown savedTrace.ParsedResponseType %s", trace.ParsedResponseType))
 	}
 	return
 }
@@ -184,7 +187,7 @@ func compareParsedResponses(a *require.Assertions, savedTrace, liveTrace daemon.
 				a.True(ok, msgEtc...)
 				a.Len(w.Boxes, len(v.Boxes), msgEtc...)
 			default:
-				a.Fail("unknown recovered %v with type %T", x, v)
+				a.Fail(fmt.Sprintf("unknown recovered %v with type %T", x, v), msgEtc...)
 			}
 			return
 		case daemon.SetEquality:
@@ -196,14 +199,14 @@ func compareParsedResponses(a *require.Assertions, savedTrace, liveTrace daemon.
 				yBoxSet := AsSetOfStrings(w.Boxes...)
 				a.True(Equal(xBoxSet, yBoxSet), msgEtc)
 			default:
-				a.Fail("unknown recovered %v with type %T", x, x)
+				a.Fail(fmt.Sprintf("unknown recovered %v with type %T", x, x), msgEtc...)
 			}
 			return
 		case daemon.Incomparable:
 			// NOOP
 			return
 		default:
-			a.Fail("all ResponseComparison's should be accounted for but somehow didn't handle <%v>", compMethod)
+			a.Fail(fmt.Sprintf("all ResponseComparison's should be accounted for but somehow didn't handle <%v>", compMethod), msgEtc...)
 	}
 }
 

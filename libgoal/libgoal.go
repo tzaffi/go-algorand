@@ -213,6 +213,10 @@ func (c *Client) ensureKmdClient() (*kmdclient.KMDClient, error) {
 	if err != nil {
 		return nil, err
 	}
+	if c.Tracing() {
+		c.trace.Name = fmt.Sprintf("goal-kmd: %s", c.trace.Name)
+		kmd.SetTrace(c.trace)
+	}
 	return &kmd, nil
 }
 

@@ -18,13 +18,19 @@ package client
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 
 	v1 "github.com/algorand/go-algorand/daemon/kmd/api/v1"
 	"github.com/algorand/go-algorand/daemon/kmd/lib/kmdapi"
 	"github.com/algorand/go-algorand/protocol"
 )
+
+func asPtr[T any](t T) *T {
+	return &t
+}
 
 // DoV1Request accepts a request from kmdapi/requests and
 func (kcl KMDClient) DoV1Request(req kmdapi.APIV1Request, resp kmdapi.APIV1Response) error {
@@ -36,8 +42,21 @@ func (kcl KMDClient) DoV1Request(req kmdapi.APIV1Request, resp kmdapi.APIV1Respo
 		return err
 	}
 
+	trace := kcl.trace
+	if trace != nil {
+		trace.Path = reqPath
+		trace.Method = reqMethod
+		// trace.EncodeJSON = encodeJSON
+		trace.DecodeJSON = true
+		trace.ParsedResponseType = fmt.Sprintf("%T", resp)
+	}
+
+
 	// Encode the request
 	body = protocol.EncodeJSON(req)
+	if trace != nil {
+		trace.BytesB64 = asPtr(base64.StdEncoding.EncodeToString(body))
+	}
 	fullPath := fmt.Sprintf("http://%s/%s", kcl.address, reqPath)
 	hreq, err := http.NewRequest(reqMethod, fullPath, bytes.NewReader(body))
 	if err != nil {
@@ -50,12 +69,32 @@ func (kcl KMDClient) DoV1Request(req kmdapi.APIV1Request, resp kmdapi.APIV1Respo
 	// Send the request
 	hresp, err := kcl.httpClient.Do(hreq)
 	if err != nil {
+		if trace != nil {
+			trace.ResponseErr = asPtr(err.Error())
+		}
 		return err
+	}
+
+	if trace != nil {
+		trace.StatusCode = hresp.StatusCode
+
+		bodyBytes, _ := io.ReadAll(hresp.Body)
+		hresp.Body.Close()
+		hresp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		trace.Response = asPtr(string(bodyBytes))
+		trace.ResponseB64 = asPtr(base64.StdEncoding.EncodeToString(bodyBytes))
 	}
 
 	// Decode the response object
 	decoder := protocol.NewJSONDecoder(hresp.Body)
 	err = decoder.Decode(resp)
+	if trace != nil {
+		trace.ParsedResponse = resp
+		if err != nil {
+			trace.ResponseErr = asPtr(err.Error())
+		}
+	}
 	hresp.Body.Close()
 	if err != nil {
 		return err
@@ -64,6 +103,9 @@ func (kcl KMDClient) DoV1Request(req kmdapi.APIV1Request, resp kmdapi.APIV1Respo
 	// Check if this was an error response
 	err = resp.GetError()
 	if err != nil {
+		if trace != nil {
+			trace.ResponseErr = asPtr(err.Error())
+		}
 		return err
 	}
 

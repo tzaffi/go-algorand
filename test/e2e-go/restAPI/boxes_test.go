@@ -21,12 +21,15 @@ import (
 func traceBoxes(t *testing.T, a *require.Assertions, _ algodClient.RestClient, gc libgoal.Client) []daemon.Trace{
 	liveTraces := []daemon.Trace{}
 	
-	// trace := &daemon.Trace{Name: "nil program works, but results in invalid version text"}
+	gc.StartTrace("WaitForRound 1").WithComparator(daemon.Incomparable)
 	gc.WaitForRound(1)
+	liveTraces = append(liveTraces, *gc.Trace())
 
 	gc.SetAPIVersionAffinity(algodClient.APIVersionV2, kmdclient.APIVersionV1)
 
+	gc.StartTrace("Unencryped Wallet Handle - setup").WithComparator(daemon.Incomparable)
 	wh, err := gc.GetUnencryptedWalletHandle()
+	liveTraces = append(liveTraces, *gc.Trace())
 	a.NoError(err)
 	addresses, err := gc.ListAddresses(wh)
 	a.NoError(err)
@@ -149,7 +152,9 @@ end:
 		stxns := make([]transactions.SignedTxn, len(boxNames))
 		for i := 0; i < len(boxNames); i++ {
 			txns[i].Group = gid
+			gc.StartTrace("Unencryped Wallet Handle - (%d)", i).WithComparator(daemon.Incomparable)
 			wh, err = gc.GetUnencryptedWalletHandle()
+			liveTraces = append(liveTraces, *gc.Trace())
 			a.NoError(err)
 			stxns[i], err = gc.SignTransactionWithWallet(wh, nil, txns[i])
 			a.NoError(err)
