@@ -179,6 +179,10 @@ func recoverResponse(a *require.Assertions, trace daemon.Trace) (recovered inter
 		return recoverType[*v1.TransactionID](a, parsed)
 	case "*v1.Transaction":
 		return recoverType[*v1.Transaction](a, parsed)
+	case "*generated.PendingTransactionResponse":
+		return recoverType[*generated.PendingTransactionResponse](a, parsed)
+	case "*kmdapi.APIV1POSTTransactionSignResponse":
+		return recoverType[*kmdapi.APIV1POSTTransactionSignResponse](a, parsed)
 	default:
 		a.Fail(fmt.Sprintf("unknown savedTrace.ParsedResponseType %s", trace.ParsedResponseType))
 	}

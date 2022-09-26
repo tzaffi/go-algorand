@@ -54,6 +54,16 @@ func traceBoxes(t *testing.T, a *require.Assertions, _ algodClient.RestClient, g
 	}
 	a.NoError(err)
 
+	volatileHint = daemon.Trace{
+		Daemon: "boxes_test.go",
+		Name: "is this the funding address ??? - volatile experiment",
+		Volatile: true,
+		ParsedResponseType: fmt.Sprintf("%T", someAddress),
+		ParsedResponse: someAddress,
+	}
+	liveTraces = append(liveTraces, volatileHint)
+
+
 	prog := `#pragma version 8
     txn ApplicationID
     bz end
@@ -148,7 +158,9 @@ end:
 	liveTraces = append(liveTraces, volatileHint)
 
 	// fund app account
-	gc.StartTrace("sending payment to fund the app")
+	gc.StartTrace("sending payment to fund the app",
+	).WithReqComparator(daemon.Incomparable,
+	).WithRespComparator(daemon.Incomparable)
 	appFundTxn, err := gc.SendPaymentFromWallet(
 		wh, nil, someAddress, createdAppID.Address().String(),
 		0, 10_000_000, nil, "", 0, 0,
@@ -204,13 +216,18 @@ end:
 			liveTraces = append(liveTraces, *gc.Trace())
 			a.NoError(err)
 
-			gc.StartTrace("signing txns[%d]", i)
+			gc.StartTrace(
+				"signing txns[%d]", i,
+			).WithReqComparator(daemon.Incomparable,
+			).WithRespComparator(daemon.Incomparable)
 			stxns[i], err = gc.SignTransactionWithWallet(wh, nil, txns[i])
 			liveTraces = append(liveTraces, *gc.Trace())
 			a.NoError(err)
 		}
 
-		gc.StartTrace("broadcasting the group")
+		gc.StartTrace("broadcasting the group",
+		).WithReqComparator(daemon.Incomparable,
+		).WithRespComparator(daemon.Incomparable)
 		err = gc.BroadcastTransactionGroup(stxns)
 		liveTraces = append(liveTraces, *gc.Trace())
 		a.NoError(err)
