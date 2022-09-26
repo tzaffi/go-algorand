@@ -155,33 +155,39 @@ func recoverType[R any](a *require.Assertions, r interface{}) R {
 
 // TODO: go generate can handle this:
 func recoverResponse(a *require.Assertions, trace daemon.Trace) (recovered interface{}) {
-	parsed := trace.ParsedResponse
+	parsed := trace.ParsedResponse	
+
 	switch trace.ParsedResponseType {
 	case "*generated.DisassembleResponse":
-		recovered = recoverType[*generated.DisassembleResponse](a, parsed)
+		return recoverType[*generated.DisassembleResponse](a, parsed)
 	case "*generated.BoxesResponse":
-		recovered = recoverType[*generated.BoxesResponse](a, parsed)
+		return recoverType[*generated.BoxesResponse](a, parsed)
 	case "*generated.BoxResponse":
-		recovered = recoverType[*generated.BoxResponse](a, parsed)
+		return recoverType[*generated.BoxResponse](a, parsed)
 	case "*v1.NodeStatus":
-		recovered = recoverType[*v1.NodeStatus](a, parsed)
+		return recoverType[*v1.NodeStatus](a, parsed)
 	case "*kmdapi.APIV1POSTWalletRenewResponse":
-		recovered = recoverType[*kmdapi.APIV1POSTWalletRenewResponse](a, parsed)
+		return recoverType[*kmdapi.APIV1POSTWalletRenewResponse](a, parsed)
 	case "*kmdapi.APIV1POSTMultisigListResponse":
-		recovered = recoverType[*kmdapi.APIV1POSTMultisigListResponse](a, parsed)
+		return recoverType[*kmdapi.APIV1POSTMultisigListResponse](a, parsed)
+	case "*v1.TransactionID":
+		return recoverType[*v1.TransactionID](a, parsed)
+	case "*v1.Transaction":
+		return recoverType[*v1.Transaction](a, parsed)
 	default:
 		a.Fail(fmt.Sprintf("unknown savedTrace.ParsedResponseType %s", trace.ParsedResponseType))
 	}
 	return
 }
 
-func compareRawRequests(a *require.Assertions, savedTrace, liveTrace daemon.Trace, msgEtc ...interface{}) {
-	x := savedTrace.RequestBytesB64
-	y := liveTrace.RequestBytesB64
+func compareRequests(a *require.Assertions, savedTrace, liveTrace daemon.Trace, msgEtc ...interface{}) {
 	compMethod := savedTrace.RequestComparator
 	switch(compMethod) {
 		case daemon.Equality:
-			a.Equal(x, y, msgEtc...)
+			a.Equal(savedTrace.Path, liveTrace.Path, msgEtc...)
+			a.Equal(savedTrace.Resource, liveTrace.Resource, msgEtc...)
+			a.Equal(savedTrace.Params, liveTrace.Params, msgEtc...)
+			a.Equal(savedTrace.RequestBytesB64, liveTrace.RequestBytesB64, msgEtc...)
 			return
 		case daemon.Incomparable:
 			// NOOP
@@ -246,10 +252,7 @@ func assertNoRegressions(a *require.Assertions, savedTraces []daemon.Trace, live
 
 		e(savedTrace.Daemon, liveTrace.Daemon)
 		e(savedTrace.Name, liveTrace.Name)
-		e(savedTrace.Path, liveTrace.Path)
-		e(savedTrace.Resource, liveTrace.Resource)
 		e(savedTrace.Method, liveTrace.Method)
-		e(savedTrace.Params, liveTrace.Params)
 		e(savedTrace.EncodeJSON, liveTrace.EncodeJSON)
 		e(savedTrace.DecodeJSON, liveTrace.DecodeJSON)
 		e(savedTrace.StatusCode, liveTrace.StatusCode)
@@ -258,7 +261,7 @@ func assertNoRegressions(a *require.Assertions, savedTraces []daemon.Trace, live
 		e(savedTrace.RequestComparator, liveTrace.RequestComparator)
 		e(savedTrace.ResponseComparator, liveTrace.ResponseComparator)
 
-		compareRawRequests(a, savedTrace, liveTrace, msg)
+		compareRequests(a, savedTrace, liveTrace, msg)
 
 		if savedTrace.ParsedResponse == nil {
 			a.Nil(liveTrace.ParsedResponse, msg)

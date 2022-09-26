@@ -109,21 +109,29 @@ end:
 	appCreateTxn, err = gc.FillUnsignedTxTemplate(someAddress, 0, 0, 0, appCreateTxn)
 	a.NoError(err)
 
-	gc.StartTrace("create the app: sign & broadcast. TODO: currently only the KMD signing gets traced")
+	gc.StartTrace(
+		"create the app: sign & broadcast. TODO: currently only the KMD signing gets traced",
+	).WithReqComparator(
+		daemon.Incomparable,
+	).WithRespComparator(daemon.Incomparable)
 	appCreateTxID, err := gc.SignAndBroadcastTransaction(wh, nil, appCreateTxn)
 	liveTraces = append(liveTraces, *gc.Trace())
 
 	a.NoError(err)
-	gc.StartTrace("wait for the app create txn. TODO: only trace the first call")
+	gc.StartTrace(
+		"wait for the app create txn. TODO: only trace the first call",
+	).WithReqComparator(daemon.Incomparable,
+	).WithRespComparator(daemon.Incomparable)
 	_, err = waitForTransaction(t, gc, someAddress, appCreateTxID, 30*time.Second)
 	liveTraces = append(liveTraces, *gc.Trace())
 	a.NoError(err)
 
 	// get app ID
-	gc.StartTrace("finally - getting the APP ID!!!")
+	gc.StartTrace("finally - getting the APP ID!!!",
+	).WithReqComparator(daemon.Incomparable,
+	).WithRespComparator(daemon.Incomparable)
 	submittedAppCreateTxn, err := gc.PendingTransactionInformationV2(appCreateTxID)
 	liveTraces = append(liveTraces, *gc.Trace())
-
 
 	a.NoError(err)
 	a.NotNil(submittedAppCreateTxn.ApplicationIndex)
@@ -383,7 +391,7 @@ end:
 		gc.StartTrace("looking for box %s", boxTest.encodedName)
 		boxResponse, err := gc.GetApplicationBoxByName(uint64(createdAppID), boxTest.encodedName)
 		liveTraces = append(liveTraces, *gc.Trace())
-		
+
 		a.NoError(err)
 		a.Equal(boxTest.name, boxResponse.Name)
 		a.Equal(boxTest.value, boxResponse.Value)
