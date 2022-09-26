@@ -28,6 +28,7 @@ import (
 	algodClient "github.com/algorand/go-algorand/daemon/algod/api/client"
 	"github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated"
 	v1 "github.com/algorand/go-algorand/daemon/algod/api/spec/v1"
+	"github.com/algorand/go-algorand/daemon/kmd/lib/kmdapi"
 	"github.com/algorand/go-algorand/libgoal"
 	"github.com/algorand/go-algorand/test/framework/fixtures"
 	"github.com/algorand/go-algorand/test/partitiontest"
@@ -164,6 +165,8 @@ func recoverResponse(a *require.Assertions, trace daemon.Trace) (recovered inter
 		recovered = recoverType[*generated.BoxResponse](a, parsed)
 	case "*v1.NodeStatus":
 		recovered = recoverType[*v1.NodeStatus](a, parsed)
+	case "*kmdapi.APIV1POSTWalletRenewResponse":
+		recovered = recoverType[*kmdapi.APIV1POSTWalletRenewResponse](a, parsed)
 	default:
 		a.Fail(fmt.Sprintf("unknown savedTrace.ParsedResponseType %s", trace.ParsedResponseType))
 	}
@@ -187,6 +190,10 @@ func compareRawRequests(a *require.Assertions, savedTrace, liveTrace daemon.Trac
 }
 
 func compareParsedResponses(a *require.Assertions, savedTrace, liveTrace daemon.Trace, msgEtc ...interface{}) {
+	if savedTrace.Volatile {
+		return
+	}
+
 	x := recoverResponse(a, savedTrace)
 	y := liveTrace.ParsedResponse
 	compMethod := savedTrace.ResponseComparator
@@ -246,14 +253,15 @@ func assertNoRegressions(a *require.Assertions, savedTraces []daemon.Trace, live
 		e(savedTrace.StatusCode, liveTrace.StatusCode)
 		e(savedTrace.ResponseErr, liveTrace.ResponseErr)
 		e(savedTrace.ParsedResponseType, liveTrace.ParsedResponseType)
+		e(savedTrace.RequestComparator, liveTrace.RequestComparator)
 		e(savedTrace.ResponseComparator, liveTrace.ResponseComparator)
 
-		compareRawRequests(a, savedTrace, liveTrace)
+		compareRawRequests(a, savedTrace, liveTrace, msg)
 
 		if savedTrace.ParsedResponse == nil {
 			a.Nil(liveTrace.ParsedResponse, msg)
 		} else {
-			compareParsedResponses(a, savedTrace, liveTrace)
+			compareParsedResponses(a, savedTrace, liveTrace, msg)
 		}		
 	}
 }

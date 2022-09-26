@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"encoding/binary"
+	"fmt"
 	"sort"
 	"testing"
 	"time"
@@ -21,18 +22,32 @@ import (
 func traceBoxes(t *testing.T, a *require.Assertions, _ algodClient.RestClient, gc libgoal.Client) []daemon.Trace{
 	liveTraces := []daemon.Trace{}
 	
-	gc.StartTrace("WaitForRound 1").WithComparator(daemon.Incomparable)
+	gc.StartTrace("WaitForRound 1").WithReqComparator(daemon.Incomparable).WithRespComparator(daemon.Incomparable)
 	gc.WaitForRound(1)
 	liveTraces = append(liveTraces, *gc.Trace())
 
 	gc.SetAPIVersionAffinity(algodClient.APIVersionV2, kmdclient.APIVersionV1)
 
-	gc.StartTrace("Unencryped Wallet Handle - setup").WithComparator(daemon.Incomparable)
+	gc.StartTrace("Unencryped Wallet Handle - setup").WithReqComparator(daemon.Incomparable).WithRespComparator(daemon.Incomparable)
 	wh, err := gc.GetUnencryptedWalletHandle()
 	liveTraces = append(liveTraces, *gc.Trace())
+
 	a.NoError(err)
+	gc.StartTrace("List Addresses - prelude (ignorable?)").WithReqComparator(daemon.Incomparable)
 	addresses, err := gc.ListAddresses(wh)
+	liveTraces = append(liveTraces, *gc.Trace())
 	a.NoError(err)
+
+	volatileHint := daemon.Trace{
+		Daemon: "boxes_test.go",
+		Name: "list addresses aggregated result - volatile experiment",
+		Volatile: true,
+		ParsedResponseType: fmt.Sprintf("%T", addresses),
+		ParsedResponse: addresses,
+	}
+	liveTraces = append(liveTraces, volatileHint)
+
+	// TODO: do we want to actually trace all the maxBallAddr calls?
 	_, someAddress := getMaxBalAddr(t, gc, addresses)
 	if someAddress == "" {
 		a.Fail("no addr with funds")
@@ -93,25 +108,49 @@ end:
 	a.NoError(err)
 	appCreateTxn, err = gc.FillUnsignedTxTemplate(someAddress, 0, 0, 0, appCreateTxn)
 	a.NoError(err)
+
+	gc.StartTrace("create the app: sign & broadcast. TODO: currently only the KMD signing gets traced")
 	appCreateTxID, err := gc.SignAndBroadcastTransaction(wh, nil, appCreateTxn)
+	liveTraces = append(liveTraces, *gc.Trace())
+
 	a.NoError(err)
+	gc.StartTrace("wait for the app create txn. TODO: only trace the first call")
 	_, err = waitForTransaction(t, gc, someAddress, appCreateTxID, 30*time.Second)
+	liveTraces = append(liveTraces, *gc.Trace())
 	a.NoError(err)
 
 	// get app ID
+	gc.StartTrace("finally - getting the APP ID!!!")
 	submittedAppCreateTxn, err := gc.PendingTransactionInformationV2(appCreateTxID)
+	liveTraces = append(liveTraces, *gc.Trace())
+
+
 	a.NoError(err)
 	a.NotNil(submittedAppCreateTxn.ApplicationIndex)
 	createdAppID := basics.AppIndex(*submittedAppCreateTxn.ApplicationIndex)
 	a.Greater(uint64(createdAppID), uint64(0))
 
+	volatileHint = daemon.Trace{
+		Daemon: "boxes_test.go",
+		Name: "createdAppID",
+		Volatile: true,
+		ParsedResponseType: fmt.Sprintf("%T", createdAppID),
+		ParsedResponse: createdAppID,
+	}
+	liveTraces = append(liveTraces, volatileHint)
+
 	// fund app account
+	gc.StartTrace("sending payment to fund the app")
 	appFundTxn, err := gc.SendPaymentFromWallet(
 		wh, nil, someAddress, createdAppID.Address().String(),
 		0, 10_000_000, nil, "", 0, 0,
 	)
+	liveTraces = append(liveTraces, *gc.Trace())
+
 	a.NoError(err)
 	appFundTxID := appFundTxn.ID()
+
+	// Skip the wait for transaction
 	_, err = waitForTransaction(t, gc, someAddress, appFundTxID.String(), 30*time.Second)
 	a.NoError(err)
 
@@ -152,17 +191,23 @@ end:
 		stxns := make([]transactions.SignedTxn, len(boxNames))
 		for i := 0; i < len(boxNames); i++ {
 			txns[i].Group = gid
-			gc.StartTrace("Unencryped Wallet Handle - (%d)", i).WithComparator(daemon.Incomparable)
+			gc.StartTrace("Unencryped Wallet Handle - (%d)", i).WithReqComparator(daemon.Incomparable).WithRespComparator(daemon.Incomparable)
 			wh, err = gc.GetUnencryptedWalletHandle()
 			liveTraces = append(liveTraces, *gc.Trace())
 			a.NoError(err)
+
+			gc.StartTrace("signing txns[%d]", i)
 			stxns[i], err = gc.SignTransactionWithWallet(wh, nil, txns[i])
+			liveTraces = append(liveTraces, *gc.Trace())
 			a.NoError(err)
 		}
 
+		gc.StartTrace("broadcasting the group")
 		err = gc.BroadcastTransactionGroup(stxns)
+		liveTraces = append(liveTraces, *gc.Trace())
 		a.NoError(err)
 
+		// skip trace for waiting for the txn:
 		_, err = waitForTransaction(t, gc, someAddress, txns[0].ID().String(), 30*time.Second)
 		a.NoError(err)
 	}
@@ -207,7 +252,7 @@ end:
 		var resp generated.BoxesResponse
 		gc.StartTrace(
 			"boxes request for %d (%d)", createdAppID, operateAndMatchResCounter,
-		).WithComparator(daemon.SetEquality)
+		).WithRespComparator(daemon.SetEquality)
 		resp, err = gc.ApplicationBoxes(uint64(createdAppID), 0)
 		liveTraces = append(liveTraces, *gc.Trace())
 		a.NoError(err)
@@ -271,6 +316,7 @@ end:
 	gc.StartTrace("request for boxes")
 	resp, err := gc.ApplicationBoxes(uint64(createdAppID), 0)
 	liveTraces = append(liveTraces, *gc.Trace())
+
 	a.NoError(err)
 	a.Empty(resp.Boxes)
 
@@ -288,7 +334,7 @@ end:
 	maxBoxNumToGet := uint64(10)
 	gc.StartTrace(
 		"lots o boxes (%d)", maxBoxNumToGet,
-	).WithComparator(daemon.ByLength)
+	).WithRespComparator(daemon.ByLength)
 	resp, err = gc.ApplicationBoxes(uint64(createdAppID), maxBoxNumToGet)
 	liveTraces = append(liveTraces, *gc.Trace())
 
@@ -309,6 +355,7 @@ end:
 	gc.StartTrace("more empty boxes")
 	resp, err = gc.ApplicationBoxes(uint64(createdAppID), 0)
 	liveTraces = append(liveTraces, *gc.Trace())
+	
 	a.NoError(err)
 	a.Empty(resp.Boxes)
 
@@ -336,6 +383,7 @@ end:
 		gc.StartTrace("looking for box %s", boxTest.encodedName)
 		boxResponse, err := gc.GetApplicationBoxByName(uint64(createdAppID), boxTest.encodedName)
 		liveTraces = append(liveTraces, *gc.Trace())
+		
 		a.NoError(err)
 		a.Equal(boxTest.name, boxResponse.Name)
 		a.Equal(boxTest.value, boxResponse.Value)

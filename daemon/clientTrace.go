@@ -18,17 +18,25 @@ const (
 	Incomparable // don't attempt to compare
 )
 
-func (trace *Trace) WithComparator(comparator TraceComparison) *Trace{
+func (trace *Trace) WithRespComparator(comparator TraceComparison) *Trace{
 	if trace != nil {
 		trace.ResponseComparator = comparator
 	}
 	return trace
 }
 
+func (trace *Trace) WithReqComparator(comparator TraceComparison) *Trace{
+	if trace != nil {
+		trace.RequestComparator = comparator
+	}
+	return trace
+}
+
 // and for creating SDK fixtures from the results
 type Trace struct {
-	Daemon string `json:"daemon"`
-	Name string   `json:"name"`
+	Daemon 	 string `json:"daemon"`
+	Name 	 string `json:"name"`
+	Volatile bool 	`json:"volatile"`
 
 	Path     string `json:"path"`
 	Resource string `json:"resource"`
@@ -46,7 +54,6 @@ type Trace struct {
 	StatusCode  int     `json:"statusCode"`
 	ResponseErr *string `json:"responseErr"`
 
-	// raw response (TOOD: and/or) b64 dencoded
 	Response *string 	`json:"response"`
 	ResponseB64 *string `json:"responseB64"`
 
