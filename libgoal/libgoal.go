@@ -71,8 +71,9 @@ type Client struct {
 	trace *daemon.Trace
 }
 
-func (c *Client) StartTrace(nameFmt string, parts ...any) {
+func (c *Client) StartTrace(nameFmt string, parts ...any) *daemon.Trace {
 	c.trace = &daemon.Trace{Daemon: "goal", Name: fmt.Sprintf(nameFmt, parts...)}
+	return c.trace
 }
 
 func (c *Client) Trace() *daemon.Trace {

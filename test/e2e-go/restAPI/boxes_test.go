@@ -200,7 +200,9 @@ end:
 		}
 
 		var resp generated.BoxesResponse
-		gc.StartTrace("boxes request for %d (%d)", createdAppID, operateAndMatchResCounter)
+		gc.StartTrace(
+			"boxes request for %d (%d)", createdAppID, operateAndMatchResCounter,
+		).WithComparator(daemon.SetEquality)
 		resp, err = gc.ApplicationBoxes(uint64(createdAppID), 0)
 		liveTraces = append(liveTraces, *gc.Trace())
 		a.NoError(err)
@@ -279,7 +281,9 @@ end:
 	}
 
 	maxBoxNumToGet := uint64(10)
-	gc.StartTrace("lots o boxes (%d)", maxBoxNumToGet)
+	gc.StartTrace(
+		"lots o boxes (%d)", maxBoxNumToGet,
+	).WithComparator(daemon.ByLength)
 	resp, err = gc.ApplicationBoxes(uint64(createdAppID), maxBoxNumToGet)
 	liveTraces = append(liveTraces, *gc.Trace())
 

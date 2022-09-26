@@ -33,9 +33,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type WithLength interface {
+	~map[any]any | ~[]any | ~string | ~chan<- any
+}
+type Slice interface { ~[]any }
+
 type tracerTest func(t *testing.T, a *require.Assertions, ac algodClient.RestClient, gc libgoal.Client) []daemon.Trace
 
-// Set inspired by: https://dbuddy.medium.com/implementing-set-data-structure-in-go-using-generics-4a967f823bfb
+// Set[T] inspired by: https://dbuddy.medium.com/implementing-set-data-structure-in-go-using-generics-4a967f823bfb
 
 type Set[T comparable] map[T]bool
 
@@ -146,9 +151,61 @@ func recoverType[R any](a *require.Assertions, r interface{}) R {
 	return unmarshal[R](a, marshal(a, r))
 }
 
-// var handledTypes map[string]reflect.Type{
-// 	"*generated.DisassembleResponse": *generated.DisassembleResponse
-// }
+// TODO: go generate can handle this:
+func recoverResponse(a *require.Assertions, trace daemon.Trace) (recovered interface{}) {
+	parsed := trace.ParsedResponse
+	switch trace.ParsedResponseType {
+	case "*generated.DisassembleResponse":
+		recovered = recoverType[*generated.DisassembleResponse](a, parsed)
+	case "*generated.BoxesResponse":
+		recovered = recoverType[*generated.BoxesResponse](a, parsed)
+	case "*generated.BoxResponse":
+		recovered = recoverType[*generated.BoxResponse](a, parsed)
+	default:
+		a.Fail("unknown savedTrace.ParsedResponseType %s", trace.ParsedResponseType)
+	}
+	return
+}
+
+func compareParsedResponses(a *require.Assertions, savedTrace, liveTrace daemon.Trace, msgEtc ...interface{}) {
+	x := recoverResponse(a, savedTrace)
+	y := liveTrace.ParsedResponse
+	compMethod := savedTrace.Comparator
+	switch(compMethod) {
+		case daemon.Equality:
+			a.Equal(x, y, msgEtc...)
+			a.Equal(savedTrace.Response, liveTrace.Response, msgEtc...)
+			a.Equal(savedTrace.ResponseB64, liveTrace.ResponseB64, msgEtc...)	
+			return
+		case daemon.ByLength:
+			switch v := x.(type) {
+			case *generated.BoxesResponse:
+				w, ok := y.(*generated.BoxesResponse)
+				a.True(ok, msgEtc...)
+				a.Len(w.Boxes, len(v.Boxes), msgEtc...)
+			default:
+				a.Fail("unknown recovered %v with type %T", x, v)
+			}
+			return
+		case daemon.SetEquality:
+			switch v := x.(type) {
+			case *generated.BoxesResponse:
+				w, ok := y.(*generated.BoxesResponse)
+				a.True(ok, msgEtc...)
+				xBoxSet := AsSetOfStrings(v.Boxes...)
+				yBoxSet := AsSetOfStrings(w.Boxes...)
+				a.True(Equal(xBoxSet, yBoxSet), msgEtc)
+			default:
+				a.Fail("unknown recovered %v with type %T", x, x)
+			}
+			return
+		case daemon.Incomparable:
+			// NOOP
+			return
+		default:
+			a.Fail("all ResponseComparison's should be accounted for but somehow didn't handle <%v>", compMethod)
+	}
+}
 
 func assertNoRegressions(a *require.Assertions, savedTraces []daemon.Trace, liveTraces []daemon.Trace) {
 	a.Len(liveTraces, len(savedTraces))
@@ -171,65 +228,14 @@ func assertNoRegressions(a *require.Assertions, savedTraces []daemon.Trace, live
 		e(savedTrace.StatusCode, liveTrace.StatusCode)
 		e(savedTrace.ResponseErr, liveTrace.ResponseErr)
 		e(savedTrace.ParsedResponseType, liveTrace.ParsedResponseType)
+		e(savedTrace.Comparator, liveTrace.Comparator)
 
-		equals, hasCustomEquals := customEquals[savedTrace.ParsedResponseType]
-
-		if !hasCustomEquals {
-			e(savedTrace.Response, liveTrace.Response)
-			e(savedTrace.ResponseB64, liveTrace.ResponseB64)	
-		} 
-		
 		if savedTrace.ParsedResponse == nil {
 			a.Nil(liveTrace.ParsedResponse, msg)
 		} else {
-			recovered := recoverResponse(a, savedTrace)
-			if !hasCustomEquals {
-				e(recovered, liveTrace.ParsedResponse)
-			} else {
-				equals(a, recovered, liveTrace.ParsedResponse, msg)
-			}
-		}
+			compareParsedResponses(a, savedTrace, liveTrace)
+		}		
 	}
-}
-
-type equalityAsserter func(a *require.Assertions, x, y any, msgEtc ...interface{})
-
-
-var customEquals = map[string]equalityAsserter{
-	"*generated.BoxesResponse": func(a *require.Assertions, x, y any, msgEtc ...interface{}) {
-		xbr, ok := x.(*generated.BoxesResponse)
-		a.True(ok)
-		ybr, ok := y.(*generated.BoxesResponse)
-		a.True(ok)
-
-		xSet := AsSetOfStrings(xbr.Boxes...)
-		ySet := AsSetOfStrings(ybr.Boxes...)
-		
-		xyMinus := Minus(xSet, ySet)
-		a.Empty(xyMinus, msgEtc...)
-
-		yxMinus := Minus(ySet, xSet)
-		a.Empty(yxMinus, msgEtc...)
-
-		preamble := fmt.Sprintf("not equal as set of BoxDescriptor's: lengths %d v %d\ndetails:\n{%+v}\nvs\n{%+v}", len(xSet), len(ySet), xSet, ySet)
-		msgEtc = append([]interface{}{preamble}, msgEtc...)
-		a.True(Equal(xSet, ySet), msgEtc...)
-	},
-}
-
-func recoverResponse(a *require.Assertions, savedTrace daemon.Trace) (recovered any) {
-	parsed := savedTrace.ParsedResponse
-	switch savedTrace.ParsedResponseType {
-	case "*generated.DisassembleResponse":
-		recovered = recoverType[*generated.DisassembleResponse](a, parsed)
-	case "*generated.BoxesResponse":
-		recovered = recoverType[*generated.BoxesResponse](a, parsed)
-	case "*generated.BoxResponse":
-		recovered = recoverType[*generated.BoxResponse](a, parsed)
-	default:
-		a.Fail("unknown savedTrace.ParsedResponseType %s", savedTrace.ParsedResponseType)
-	}
-	return
 }
 
 // The trace results are saved in ./{tracesDirectory}/_{ezTracesFile}
