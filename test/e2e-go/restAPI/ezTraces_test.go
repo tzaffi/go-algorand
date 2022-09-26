@@ -170,10 +170,26 @@ func recoverResponse(a *require.Assertions, trace daemon.Trace) (recovered inter
 	return
 }
 
+func compareRawRequests(a *require.Assertions, savedTrace, liveTrace daemon.Trace, msgEtc ...interface{}) {
+	x := savedTrace.RequestBytesB64
+	y := liveTrace.RequestBytesB64
+	compMethod := savedTrace.RequestComparator
+	switch(compMethod) {
+		case daemon.Equality:
+			a.Equal(x, y, msgEtc...)
+			return
+		case daemon.Incomparable:
+			// NOOP
+			return
+		default:
+			a.Fail(fmt.Sprintf("all RequestComparison's should be accounted for but somehow didn't handle <%v>", compMethod), msgEtc...)
+	}
+}
+
 func compareParsedResponses(a *require.Assertions, savedTrace, liveTrace daemon.Trace, msgEtc ...interface{}) {
 	x := recoverResponse(a, savedTrace)
 	y := liveTrace.ParsedResponse
-	compMethod := savedTrace.Comparator
+	compMethod := savedTrace.ResponseComparator
 	switch(compMethod) {
 		case daemon.Equality:
 			a.Equal(x, y, msgEtc...)
@@ -224,14 +240,15 @@ func assertNoRegressions(a *require.Assertions, savedTraces []daemon.Trace, live
 		e(savedTrace.Path, liveTrace.Path)
 		e(savedTrace.Resource, liveTrace.Resource)
 		e(savedTrace.Method, liveTrace.Method)
-		e(savedTrace.BytesB64, liveTrace.BytesB64)
 		e(savedTrace.Params, liveTrace.Params)
 		e(savedTrace.EncodeJSON, liveTrace.EncodeJSON)
 		e(savedTrace.DecodeJSON, liveTrace.DecodeJSON)
 		e(savedTrace.StatusCode, liveTrace.StatusCode)
 		e(savedTrace.ResponseErr, liveTrace.ResponseErr)
 		e(savedTrace.ParsedResponseType, liveTrace.ParsedResponseType)
-		e(savedTrace.Comparator, liveTrace.Comparator)
+		e(savedTrace.ResponseComparator, liveTrace.ResponseComparator)
+
+		compareRawRequests(a, savedTrace, liveTrace)
 
 		if savedTrace.ParsedResponse == nil {
 			a.Nil(liveTrace.ParsedResponse, msg)

@@ -9,18 +9,18 @@ type Traceable interface {
 }
 */
 
-type ResponseComparison int64
+type TraceComparison int64
 
 const (
-	Equality ResponseComparison = iota // default to comparing using ==
+	Equality TraceComparison = iota // default to comparing using ==
 	SetEquality // only look at the contents of collection regardless of order
 	ByLength // only compare using len()
 	Incomparable // don't attempt to compare
 )
 
-func (trace *Trace) WithComparator(comparator ResponseComparison) *Trace{
+func (trace *Trace) WithComparator(comparator TraceComparison) *Trace{
 	if trace != nil {
-		trace.Comparator = comparator
+		trace.ResponseComparator = comparator
 	}
 	return trace
 }
@@ -34,8 +34,9 @@ type Trace struct {
 	Resource string `json:"resource"`
 	Method   string `json:"method"`
 
-	// only for endpoints receiving raw bytes. cf. `rawRequestPaths`:
-	BytesB64 *string `json:"bytesB64"`
+	RequestType 	string 		`json:"requestGoType"`
+	RequestObject   interface{} `json:"requestObject"`
+	RequestBytesB64 *string 	`json:"requestBytesB64"`
 
 	// for the non-raw bytes endpoints:
 	Params *map[string][]string `json:"params"`
@@ -53,5 +54,6 @@ type Trace struct {
 	ParsedResponseType string      `json:"parsedResponseGoType"`
 	ParsedResponse     interface{} `json:"parsedResponse"`
 
-	Comparator ResponseComparison `json:"comparator"`
+	RequestComparator TraceComparison `json:"requestComparator"`
+	ResponseComparator TraceComparison `json:"responseComparator"`
 }

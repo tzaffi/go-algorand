@@ -200,9 +200,9 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 				return fmt.Errorf("couldn't decode raw request as bytes")
 			}
 			if trace != nil {
-				// currently, trace is intended for tracing response handling, so no
-				// further breadcrumbs provided when the raw request is malformed
-				trace.BytesB64 = asPtr(base64.StdEncoding.EncodeToString(reqBytes))
+				trace.RequestType = fmt.Sprintf("%T", request)
+				trace.RequestObject = request
+				trace.RequestBytesB64 = asPtr(base64.StdEncoding.EncodeToString(reqBytes))
 			}
 			body = bytes.NewBuffer(reqBytes)
 		} else {

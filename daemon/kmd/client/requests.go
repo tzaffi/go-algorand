@@ -55,7 +55,9 @@ func (kcl KMDClient) DoV1Request(req kmdapi.APIV1Request, resp kmdapi.APIV1Respo
 	// Encode the request
 	body = protocol.EncodeJSON(req)
 	if trace != nil {
-		trace.BytesB64 = asPtr(base64.StdEncoding.EncodeToString(body))
+		trace.RequestType = fmt.Sprintf("%T", req)
+		trace.RequestObject = req
+		trace.RequestBytesB64 = asPtr(base64.StdEncoding.EncodeToString(body))
 	}
 	fullPath := fmt.Sprintf("http://%s/%s", kcl.address, reqPath)
 	hreq, err := http.NewRequest(reqMethod, fullPath, bytes.NewReader(body))
