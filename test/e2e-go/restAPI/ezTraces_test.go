@@ -167,6 +167,8 @@ func recoverResponse(a *require.Assertions, trace daemon.Trace) (recovered inter
 		recovered = recoverType[*v1.NodeStatus](a, parsed)
 	case "*kmdapi.APIV1POSTWalletRenewResponse":
 		recovered = recoverType[*kmdapi.APIV1POSTWalletRenewResponse](a, parsed)
+	case "*kmdapi.APIV1POSTMultisigListResponse":
+		recovered = recoverType[*kmdapi.APIV1POSTMultisigListResponse](a, parsed)
 	default:
 		a.Fail(fmt.Sprintf("unknown savedTrace.ParsedResponseType %s", trace.ParsedResponseType))
 	}
