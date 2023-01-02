@@ -23,7 +23,7 @@ jobs:
       - name: Install golang
         uses: actions/setup-go@v3
         with:
-          go-version: "1.17.13"
+          go-version: "1.19.3"
       - name: Restore libsodium from cache
         id: cache-libsodium
         uses: actions/cache@v3

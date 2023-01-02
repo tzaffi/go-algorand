@@ -18,7 +18,6 @@ package fixtures
 
 import (
 	"fmt"
-	"github.com/algorand/go-algorand/data/basics"
 	"sort"
 	"time"
 	"unicode"
@@ -27,6 +26,7 @@ import (
 
 	"github.com/algorand/go-algorand/daemon/algod/api/client"
 	v1 "github.com/algorand/go-algorand/daemon/algod/api/spec/v1"
+	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/libgoal"
 	"github.com/algorand/go-algorand/nodecontrol"
 	"github.com/algorand/go-algorand/test/e2e-go/globals"
@@ -139,7 +139,7 @@ func (f *RestClientFixture) ClientWaitForRoundWithTimeout(client client.RestClie
 			}
 		case <-time.After(roundTime):
 			// we've timed out.
-			time := time.Now().Sub(roundStarted)
+			time := time.Since(roundStarted)
 			return fmt.Errorf("fixture.WaitForRound took %3.2f seconds between round %d and %d", time.Seconds(), lastRound, nextRound)
 		}
 

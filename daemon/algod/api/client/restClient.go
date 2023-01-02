@@ -29,6 +29,7 @@ import (
 
 	"github.com/google/go-querystring/query"
 
+	"github.com/algorand/go-algorand/daemon"
 	generatedV2 "github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated"
 	privateV2 "github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated/private"
 
@@ -58,10 +59,11 @@ const (
 
 // rawRequestPaths is a set of paths where the body should not be urlencoded
 var rawRequestPaths = map[string]bool{
-	"/v1/transactions":  true,
-	"/v2/teal/dryrun":   true,
-	"/v2/teal/compile":  true,
-	"/v2/participation": true,
+	"/v1/transactions":     true,
+	"/v2/teal/dryrun":      true,
+	"/v2/teal/compile":     true,
+	"/v2/teal/disassemble": true,
+	"/v2/participation":    true,
 }
 
 // unauthorizedRequestError is generated when we receive 401 error from the server. This error includes the inner error
@@ -94,6 +96,27 @@ type RestClient struct {
 	serverURL       url.URL
 	apiToken        string
 	versionAffinity APIVersion
+	trace 			*daemon.Trace
+}
+
+func (c *RestClient) StartTrace(nameFmt string, parts ...any) {
+	c.trace = &daemon.Trace{Daemon: "algod", Name: fmt.Sprintf(nameFmt, parts...)}
+}
+
+func (c *RestClient) SetTrace(trace *daemon.Trace) {
+	c.trace = trace
+}
+
+func (c *RestClient) Trace() *daemon.Trace {
+	return c.trace
+}
+
+func (c *RestClient) Tracing() bool {
+	return c.trace != nil
+}
+
+func asPtr[T any](t T) *T {
+	return &t
 }
 
 // MakeRestClient is the factory for constructing a RestClient for a given endpoint
@@ -158,9 +181,17 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	var err error
 	queryURL := client.serverURL
 	queryURL.Path = path
-
 	var req *http.Request
 	var body io.Reader
+
+	trace := client.trace
+	if trace != nil {
+		trace.Path = path
+		trace.Method = requestMethod
+		trace.EncodeJSON = encodeJSON
+		trace.DecodeJSON = decodeJSON
+		trace.ParsedResponseType = fmt.Sprintf("%T", response)
+	}
 
 	if request != nil {
 		if rawRequestPaths[path] {
@@ -168,11 +199,19 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 			if !ok {
 				return fmt.Errorf("couldn't decode raw request as bytes")
 			}
+			if trace != nil {
+				trace.RequestType = fmt.Sprintf("%T", request)
+				trace.RequestObject = request
+				trace.RequestBytesB64 = asPtr(base64.StdEncoding.EncodeToString(reqBytes))
+			}
 			body = bytes.NewBuffer(reqBytes)
 		} else {
 			v, err := query.Values(request)
 			if err != nil {
 				return err
+			}
+			if trace != nil {
+				trace.Params = asPtr(map[string][]string(v))
 			}
 
 			queryURL.RawQuery = v.Encode()
@@ -183,6 +222,9 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 		}
 	}
 
+	if trace != nil {
+		trace.Resource = queryURL.RequestURI()
+	}
 	req, err = http.NewRequest(requestMethod, queryURL.String(), body)
 	if err != nil {
 		return err
@@ -197,7 +239,21 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		if trace != nil {
+			trace.ResponseErr = asPtr(err.Error())
+		}
 		return err
+	}
+
+	if trace != nil {
+		trace.StatusCode = resp.StatusCode
+
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		trace.Response = asPtr(string(bodyBytes))
+		trace.ResponseB64 = asPtr(base64.StdEncoding.EncodeToString(bodyBytes))
 	}
 
 	// Ensure response isn't too large
@@ -206,12 +262,22 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 
 	err = extractError(resp)
 	if err != nil {
+		if trace != nil {
+			trace.ResponseErr = asPtr(err.Error())
+		}
 		return err
 	}
 
 	if decodeJSON {
 		dec := json.NewDecoder(resp.Body)
-		return dec.Decode(&response)
+		err := dec.Decode(&response)
+		if trace != nil {
+			trace.ParsedResponse = response
+			if err != nil {
+				trace.ResponseErr = asPtr(err.Error())
+			}
+		}
+		return err
 	}
 
 	// Response must implement RawResponse
@@ -227,6 +293,11 @@ func (client RestClient) submitForm(response interface{}, path string, request i
 
 	raw.SetBytes(bodyBytes)
 	return nil
+}
+
+func genericSubmit[R any](client RestClient, bytes []byte, path, method string, encodeJSON, decodeJSON bool) (resp R, err error) {
+	err = client.submitForm(&resp, path, bytes, method, encodeJSON, decodeJSON)
+	return
 }
 
 // get performs a GET request to the specific path against the server
@@ -323,7 +394,7 @@ type pendingTransactionsParams struct {
 // GetPendingTransactions asks algod for a snapshot of current pending txns on the node, bounded by maxTxns.
 // If maxTxns = 0, fetches as many transactions as possible.
 func (client RestClient) GetPendingTransactions(maxTxns uint64) (response v1.PendingTransactions, err error) {
-	err = client.get(&response, fmt.Sprintf("/v1/transactions/pending"), pendingTransactionsParams{maxTxns})
+	err = client.get(&response, "/v1/transactions/pending", pendingTransactionsParams{maxTxns})
 	return
 }
 
@@ -627,6 +698,17 @@ func (client RestClient) Compile(program []byte) (compiledProgram []byte, progra
 	}
 	programHash = crypto.Digest(progAddr)
 	return
+}
+
+// Disassemble disassembles the given program bytes and returns it inside of a DisassembleResponse
+func (client RestClient) Disassemble(assembled []byte) (resp generatedV2.DisassembleResponse, err error) {
+	return genericSubmit[generatedV2.DisassembleResponse](
+		client,
+		assembled,
+		"/v2/teal/disassemble",
+		"POST",
+		false, /* encodeJSON */
+		true,  /* decodeJSON */)
 }
 
 func (client RestClient) doGetWithQuery(ctx context.Context, path string, queryArgs map[string]string) (result string, err error) {

@@ -17,8 +17,11 @@
 package client
 
 import (
+	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/algorand/go-algorand/daemon"
 )
 
 const (
@@ -38,7 +41,25 @@ type KMDClient struct {
 	httpClient http.Client
 	apiToken   string
 	address    string
+	trace 	   *daemon.Trace
 }
+
+func (c *KMDClient) StartTrace(nameFmt string, parts ...any) {
+	c.trace = &daemon.Trace{Daemon: "kmd", Name: fmt.Sprintf(nameFmt, parts...)}
+}
+
+func (c *KMDClient) SetTrace(trace *daemon.Trace) {
+	c.trace = trace
+}
+
+func (c *KMDClient) Trace() *daemon.Trace {
+	return c.trace
+}
+
+func (c *KMDClient) Tracing() bool {
+	return c.trace != nil
+}
+
 
 func makeHTTPClient() http.Client {
 	client := http.Client{
