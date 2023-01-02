@@ -134,6 +134,12 @@ func writeTraces(a *require.Assertions, traces []daemon.Trace, filename string, 
 	a.NoError(err)
 }
 
+func marshal(a *require.Assertions, r interface{}) []byte {
+	writeBytes, err := json.MarshalIndent(r, "", "  ")
+	a.NoError(err)
+	return writeBytes
+}
+
 func readTraces(a *require.Assertions, filename string) []daemon.Trace {
 	fileBytes, err := os.ReadFile(filepath.Join(tracesDirectory, filename))
 	a.NoError(err)
@@ -141,11 +147,6 @@ func readTraces(a *require.Assertions, filename string) []daemon.Trace {
 	return unmarshal[[]daemon.Trace](a, fileBytes)
 }
 
-func marshal(a *require.Assertions, r interface{}) []byte {
-	writeBytes, err := json.MarshalIndent(r, "", "  ")
-	a.NoError(err)
-	return writeBytes
-}
 
 func unmarshal[R any](a *require.Assertions, readBytes []byte) (r R) {
 	r = *new(R)
@@ -163,26 +164,32 @@ func recoverResponse(a *require.Assertions, trace daemon.Trace) (recovered inter
 	parsed := trace.ParsedResponse	
 
 	switch trace.ParsedResponseType {
-	case "*generated.DisassembleResponse":
-		return recoverType[*generated.DisassembleResponse](a, parsed)
+	// KMD
+	case "*kmdapi.APIV1POSTMultisigListResponse":
+		return recoverType[*kmdapi.APIV1POSTMultisigListResponse](a, parsed)
+	case "*kmdapi.APIV1POSTWalletRenewResponse":
+		return recoverType[*kmdapi.APIV1POSTWalletRenewResponse](a, parsed)
+	case "*kmdapi.APIV1POSTTransactionSignResponse":
+		return recoverType[*kmdapi.APIV1POSTTransactionSignResponse](a, parsed)
+	
+	// ALGOD - V1
+	case "*v1.NodeStatus":
+		return recoverType[*v1.NodeStatus](a, parsed)
+	case "*v1.Transaction":
+		return recoverType[*v1.Transaction](a, parsed)
+	case "*v1.TransactionID":
+		return recoverType[*v1.TransactionID](a, parsed)
+	
+	// ALGOD - V2
 	case "*generated.BoxesResponse":
 		return recoverType[*generated.BoxesResponse](a, parsed)
 	case "*generated.BoxResponse":
 		return recoverType[*generated.BoxResponse](a, parsed)
-	case "*v1.NodeStatus":
-		return recoverType[*v1.NodeStatus](a, parsed)
-	case "*kmdapi.APIV1POSTWalletRenewResponse":
-		return recoverType[*kmdapi.APIV1POSTWalletRenewResponse](a, parsed)
-	case "*kmdapi.APIV1POSTMultisigListResponse":
-		return recoverType[*kmdapi.APIV1POSTMultisigListResponse](a, parsed)
-	case "*v1.TransactionID":
-		return recoverType[*v1.TransactionID](a, parsed)
-	case "*v1.Transaction":
-		return recoverType[*v1.Transaction](a, parsed)
+	case "*generated.DisassembleResponse":
+		return recoverType[*generated.DisassembleResponse](a, parsed)
 	case "*generated.PendingTransactionResponse":
 		return recoverType[*generated.PendingTransactionResponse](a, parsed)
-	case "*kmdapi.APIV1POSTTransactionSignResponse":
-		return recoverType[*kmdapi.APIV1POSTTransactionSignResponse](a, parsed)
+
 	default:
 		a.Fail(fmt.Sprintf("unknown savedTrace.ParsedResponseType %s", trace.ParsedResponseType))
 	}
