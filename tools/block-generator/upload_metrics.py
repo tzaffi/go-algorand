@@ -1,26 +1,30 @@
-from datadog import initialize
-from datadog import api
-import os
 import argparse
+import os
 
-parser = argparse.ArgumentParser(description="Upload performance metrics to Datadog")
-parser.add_argument(
-    "-f",
-    "--perf-reports",
-    required=True,
-    action="store",
-    dest="files",
-    type=str,
-    nargs="*",
-    help="list of reports created by the block generator",
-)
-parser.add_argument(
-    "-c",
-    "--binary-version",
-    required=True,
-    help="Release version or the commit hash of the Conduit binary used during the performance test",
-)
-args = parser.parse_args()
+from datadog import api, initialize
+
+
+def get_args():
+    parser = argparse.ArgumentParser(
+        description="Upload performance metrics to Datadog"
+    )
+    parser.add_argument(
+        "-f",
+        "--perf-reports",
+        required=True,
+        action="store",
+        dest="files",
+        type=str,
+        nargs="*",
+        help="list of reports created by the block generator",
+    )
+    parser.add_argument(
+        "-c",
+        "--binary-version",
+        required=True,
+        help="Release version or the commit hash of the Conduit binary used during the performance test",
+    )
+    return parser.parse_args()
 
 
 def parse_report(report):
@@ -34,6 +38,9 @@ def parse_report(report):
 
 if __name__ == "__main__":
     print("initializing datadog")
+
+    args = get_args()
+
     options = {
         "api_key": os.getenv("DATADOG_API_KEY"),
         "app_key": os.getenv("DATADOG_APP_KEY"),
