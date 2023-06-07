@@ -938,6 +938,7 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) (transactions.Sig
 	if txn.Type == "" {
 		return transactions.SignedTxn{}, transactions.ApplyData{}, fmt.Errorf("missing transaction type for app transaction")
 	}
+	// Z TODO: Entry point to the data collector:
 	defer g.recordData(actual, start)
 
 	return signTxn(txn), transactions.ApplyData{}, nil
@@ -1002,6 +1003,7 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 	// account := indexToAccount(senderIndex)
 	// txn = g.makeAppCallTxn(account, round, intra, round, approval, clear)
 
+	// TODO: this isn't correct for general app calls:
 	if g.balances[senderIndex] < g.params.MinTxnFee {
 		return "", transactions.Transaction{}, fmt.Errorf("the sender account does not have enough algos for the app call. idx %d, app transaction type %v, num %d\n\n", senderIndex, txType, g.reportData[txType].GenerationCount)
 	}

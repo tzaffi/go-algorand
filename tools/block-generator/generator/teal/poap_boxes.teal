@@ -105,12 +105,12 @@ label1: // App Creation
 	concat
 	b localsfill
 
-label15:
+label15: // trying to optin with non-zero balance and when app already exists
 
 	global GroupSize
 	intc_1 // 2
 	==
-	assert
+	assert // must be in a group of 2
 
 	gtxn 1 Amount
 	intc 4 // 2000
@@ -124,7 +124,7 @@ label15:
 	gtxn 1 Sender
 	global CreatorAddress
 	==
-	assert
+	assert // 2nd txn in the group must be a pymt to the app for .002 Algos from the creator
 
 	gtxn 1 Fee
 	intc 4 // 2000
@@ -136,11 +136,11 @@ label15:
 	itxn_field TypeEnum
 	txn Sender
 	itxn_field Receiver
-	pushint 764000
+	pushint 764000 // this easily covers the MBR for our box of size 1024 (MBR = 412,100)
 	itxn_field Amount
 	global MinTxnFee
 	itxn_field Fee
-	itxn_submit
+	itxn_submit  // send 0.764 Algos to the app account (payer unspecified therefore the account opting in)
 
 	itxn_begin
 	intc_2 // 1
@@ -151,7 +151,7 @@ label15:
 	itxn_field Amount
 	global MinTxnFee
 	itxn_field Fee
-	itxn_submit
+	itxn_submit // send .004 Algos to the creator
 	retsub
 
 label5:
@@ -159,9 +159,9 @@ label5:
 	txn Sender
 	store 3
 
-	load 3
+	load 3 // Sender
 	balance
-	store 4
+	store 4 // SenderBalance
 
 	load 4
 	bnz label14
@@ -184,9 +184,11 @@ label14:
 
 label16:
 
-	load 3
-	pushbytes 0x302c // "0,"
-	box_put
+	load 3 // Sender
+	// 992 = 1024 - 32 bytes:
+	byte "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+
+	box_put  // boxes[Sender] = "z" * 992
 	retsub
 
 label2:
@@ -212,7 +214,7 @@ label3:
 label4:
 
 	txn Sender
-	store 3
+	store 3  // 3 -> Sender
 
 	load 3
 	box_del
