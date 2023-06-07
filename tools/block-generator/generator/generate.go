@@ -55,119 +55,6 @@ var approvalSwap string
 //go:embed teal/swap_clear.teal
 var clearSwap string
 
-// ---- interfaces ----
-
-// Generator is the interface needed to generate blocks.
-type Generator interface {
-	WriteReport(output io.Writer) error
-	WriteGenesis(output io.Writer) error
-	WriteBlock(output io.Writer, round uint64) error
-	WriteAccount(output io.Writer, accountString string) error
-	WriteStatus(output io.Writer) error
-	WriteDeltas(output io.Writer, round uint64) error
-	Stop()
-}
-
-type generator struct {
-	config GenerationConfig
-
-	// payment transaction metadata
-	numPayments uint64
-
-	// Number of algorand accounts
-	numAccounts uint64
-
-	// Block stuff
-	round         uint64
-	txnCounter    uint64
-	prevBlockHash string
-	timestamp     int64
-	protocol      protocol.ConsensusVersion
-	params        cconfig.ConsensusParams
-	genesis       bookkeeping.Genesis
-	genesisID     string
-	genesisHash   crypto.Digest
-
-	// Rewards stuff
-	feeSink                   basics.Address
-	rewardsPool               basics.Address
-	rewardsLevel              uint64
-	rewardsResidue            uint64
-	rewardsRate               uint64
-	rewardsRecalculationRound uint64
-
-	// balances for all accounts. To avoid crypto and reduce storage, accounts are faked.
-	// The account is based on the index into the balances array.
-	balances []uint64
-
-	// assets is a minimal representation of the asset holdings, it doesn't
-	// include the frozen state.
-	assets []*assetData
-	// pendingAssets is used to hold newly created assets so that they are not used before
-	// being created.
-	pendingAssets []*assetData
-
-	// apps is a minimal representation of the app holdings
-	apps map[appKind][]*appData
-	// pendingApps is used to hold newly created apps so that they are not used before
-	// being created.
-	pendingApps map[appKind][]*appData
-
-	transactionWeights []float32
-
-	payTxWeights   []float32
-	assetTxWeights []float32
-	appTxWeights   []float32
-
-	// Reporting information from transaction type to data
-	reportData Report
-
-	// ledger
-	ledger *ledger.Ledger
-
-	roundOffset uint64
-}
-
-type assetData struct {
-	assetID uint64
-	creator uint64
-	name    string
-	// Holding at index 0 is the creator.
-	holdings []*assetHolding
-	// Set of holders in the holdings array for easy reference.
-	holders map[uint64]*assetHolding
-}
-
-type appData struct {
-	appID   uint64
-	creator uint64
-	kind    appKind
-	// Holding at index 0 is the creator.
-	holdings []*appHolding
-	// Set of holders in the holdings array for easy reference.
-	holders map[uint64]*appHolding
-	// TODO: more data, not sure yet exactly what
-}
-
-type assetHolding struct {
-	acctIndex uint64
-	balance   uint64
-}
-
-type appHolding struct {
-	appIndex uint64
-	// TODO: more data, not sure yet exactly what
-}
-
-// Report is the generation report.
-type Report map[TxTypeID]TxData
-
-// TxData is the generator report data.
-type TxData struct {
-	GenerationTime  time.Duration `json:"generation_time_milli"`
-	GenerationCount uint64        `json:"num_generated"`
-}
-
 // ---- constructors ----
 
 // MakeGenerator initializes the Generator object.
@@ -334,45 +221,10 @@ func (g *generator) initializeLedger() {
 	g.ledger = l
 }
 
-// ---- stop ----
-
-// Stop cleans up allocated resources.
-func (g *generator) Stop() {
-	g.ledger.Close()
-}
-
-// ---- transaction options vectors ----
-
-func getTransactionOptions() []interface{} {
-	return []interface{}{paymentTx, assetTx, applicationTx}
-}
-
-func getPaymentTxOptions() []interface{} {
-	return []interface{}{paymentAcctCreateTx, paymentPayTx}
-}
-
-func getAssetTxOptions() []interface{} {
-	return []interface{}{assetCreate, assetDestroy, assetOptin, assetClose, assetXfer}
-}
-
-func getAppTxOptions() []interface{} {
-	return []interface{}{
-		appSwapCreate, appSwapUpdate, appSwapDelete, appSwapOptin, appSwapCall, appSwapClose, appSwapClear,
-		appBoxesCreate, appBoxesUpdate, appBoxesDelete, appBoxesOptin, appBoxesCall, appBoxesClose, appBoxesClear,
-	}
-}
-
-// ---- pure writers ----
+// ---- implement Generator interface ----
 
 func (g *generator) WriteReport(output io.Writer) error {
 	return json.NewEncoder(output).Encode(g.reportData)
-}
-
-func (g *generator) WriteStatus(output io.Writer) error {
-	response := model.NodeStatusResponse{
-		LastRound: g.round + g.roundOffset,
-	}
-	return json.NewEncoder(output).Encode(response)
 }
 
 // WriteGenesis writes the genesis file and advances the round.
@@ -421,15 +273,123 @@ func (g *generator) WriteGenesis(output io.Writer) error {
 	return err
 }
 
-func track(id TxTypeID) (TxTypeID, time.Time) {
-	return id, time.Now()
-}
+// WriteBlock generates a block full of new transactions and writes it to the writer.
+// The most recent round is cached, allowing requests to the same round multiple times.
+// This is motivated by the fact that Conduit's logic requests the initial round during
+// its Init() for catchup purposes, and once again when it starts ingesting blocks.
+// There are a few constraints on the generator arising from the fact that
+// blocks must be generated sequentially and that a fixed offset between the
+// database round and the generator round is presumed:
+//   - requested round < offset ---> error
+//   - requested round == offset: the generator will provide a genesis block or offset block
+//   - requested round == generator's round + offset ---> generate a block,
+//		advance the round, and cache the block in case of repeated requests.
+//   - requested round == generator's round + offset - 1 ---> write the cached block
+//		but do not advance the round.
+//   - requested round < generator's round + offset - 1 ---> error
+//
+// NOTE: nextRound represents the generator's expectations about the next database round.
+func (g *generator) WriteBlock(output io.Writer, round uint64) error {
+	if round < g.roundOffset {
+		return fmt.Errorf("cannot generate block for round %d, already in database", round)
+	}
 
-func (g *generator) recordData(id TxTypeID, start time.Time) {
-	data := g.reportData[id]
-	data.GenerationCount++
-	data.GenerationTime += time.Since(start)
-	g.reportData[id] = data
+	nextRound := g.round + g.roundOffset
+	cachedRound := nextRound - 1
+
+	if round != nextRound && round != cachedRound {
+		return fmt.Errorf(
+			"generator only supports sequential block access. Expected %d or %d but received request for %d",
+			cachedRound,
+			nextRound,
+			round,
+		)
+	}
+	// round must either be nextRound or cachedRound
+
+	if round == cachedRound {
+		// one round behind, so write the cached block (if non-empty)
+		fmt.Printf("Received round request %d, but nextRound=%d. Not finishing round.\n", round, nextRound)
+		if len(g.latestBlockMsgp) != 0 {
+			// write the msgpack bytes for a block
+			_, err := output.Write(g.latestBlockMsgp)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// round == nextRound case
+
+	numTxnForBlock := g.txnForRound(g.round)
+
+	var cert rpcs.EncodedBlockCert
+	if g.round == 0 {
+		// we'll write genesis block / offset round for non-empty database
+		cert.Block, _, _ = g.ledger.BlockCert(basics.Round(round - g.roundOffset))
+	} else {
+		// generate a block
+		cert.Block.BlockHeader = bookkeeping.BlockHeader{
+			Round:          basics.Round(g.round),
+			Branch:         bookkeeping.BlockHash{},
+			Seed:           committee.Seed{},
+			TxnCommitments: bookkeeping.TxnCommitments{NativeSha512_256Commitment: crypto.Digest{}},
+			TimeStamp:      g.timestamp,
+			GenesisID:      g.genesisID,
+			GenesisHash:    g.genesisHash,
+			RewardsState: bookkeeping.RewardsState{
+				FeeSink:                   g.feeSink,
+				RewardsPool:               g.rewardsPool,
+				RewardsLevel:              0,
+				RewardsRate:               0,
+				RewardsResidue:            0,
+				RewardsRecalculationRound: 0,
+			},
+			UpgradeState: bookkeeping.UpgradeState{
+				CurrentProtocol: g.protocol,
+			},
+			UpgradeVote:        bookkeeping.UpgradeVote{},
+			TxnCounter:         g.txnCounter + numTxnForBlock,
+			StateProofTracking: nil,
+		}
+
+		// Generate the transactions
+		transactions := make([]transactions.SignedTxnInBlock, 0, numTxnForBlock)
+		for i := uint64(0); i < numTxnForBlock; i++ {
+			txn, ad, err := g.generateTransaction(g.round, i)
+			if err != nil {
+				panic(fmt.Sprintf("failed to generate transaction: %v\n", err))
+			}
+			stib, err := cert.Block.BlockHeader.EncodeSignedTxn(txn, ad)
+			if err != nil {
+				panic(fmt.Sprintf("failed to encode transaction: %v\n", err))
+			}
+			transactions = append(transactions, stib)
+		}
+
+		if numTxnForBlock != uint64(len(transactions)) {
+			panic("Unexpected number of transactions.")
+		}
+
+		cert.Block.Payset = transactions
+		cert.Certificate = agreement.Certificate{} // empty certificate for clarity
+
+		err := g.ledger.AddBlock(cert.Block, cert.Certificate)
+		if err != nil {
+			return err
+		}
+	}
+	cert.Block.BlockHeader.Round = basics.Round(round)
+
+	// write the msgpack bytes for a block
+	g.latestBlockMsgp = protocol.EncodeMsgp(&cert)
+	_, err := output.Write(g.latestBlockMsgp)
+	if err != nil {
+		return err
+	}
+
+	g.finishRound(numTxnForBlock)
+	return nil
 }
 
 func (g *generator) WriteAccount(output io.Writer, accountString string) error {
@@ -498,121 +458,6 @@ func (g *generator) WriteAccount(output io.Writer, accountString string) error {
 	return json.NewEncoder(output).Encode(data)
 }
 
-// ---- transaction generation ----
-
-// WriteBlock generates a block full of new transactions and writes it to the writer.
-// There are a few constraints on the generator arising from the fact that
-// blocks must be generated sequentially and that a fixed offset between the
-// database round and the generator round is presumed:
-//   - requested round < offset ---> error
-//   - requested round == offset: the generator will provide a genesis block or offset block
-//     and be lenient in allowing g.round to be non-zero, but in that case it won't advance
-//     its round any further, as the block importer may request the genesis repeatedly
-//   - requested round != generator's round + offset ---> error:
-//     as opposed to the previous, no leniency is provided in this case.
-func (g *generator) WriteBlock(output io.Writer, round uint64) error {
-	if round < g.roundOffset {
-		return fmt.Errorf("cannot generate block for round %d, already in database", round)
-	}
-	numTxnForBlock := g.txnForRound(g.round)
-
-	// return genesis block. offset round for non-empty database
-	if round == g.roundOffset {
-		// write the msgpack bytes for a block
-		block, _, _ := g.ledger.BlockCert(basics.Round(round - g.roundOffset))
-		// return the block with the requested round number
-		block.BlockHeader.Round = basics.Round(round)
-		encodedblock := rpcs.EncodedBlockCert{Block: block}
-		blk := protocol.EncodeMsgp(&encodedblock)
-		// write the msgpack bytes for a block
-		_, err := output.Write(blk)
-		if err != nil {
-			return err
-		}
-
-		// only advance the round if the requestor is caught up
-		if g.round == 0 {
-			g.finishRound(numTxnForBlock)
-		} else {
-			fmt.Printf("Received round request %d == g.roundOffset but already advanced g.round=%d. Not finishing round.\n", round, g.round)
-		}
-		return nil
-	}
-
-	if round != g.round+g.roundOffset {
-		return fmt.Errorf("generator only supports sequential block access. Expected %d but received request for %d", g.round+g.roundOffset, round)
-	}
-
-	header := bookkeeping.BlockHeader{
-		Round:          basics.Round(g.round),
-		Branch:         bookkeeping.BlockHash{},
-		Seed:           committee.Seed{},
-		TxnCommitments: bookkeeping.TxnCommitments{NativeSha512_256Commitment: crypto.Digest{}},
-		TimeStamp:      g.timestamp,
-		GenesisID:      g.genesisID,
-		GenesisHash:    g.genesisHash,
-		RewardsState: bookkeeping.RewardsState{
-			FeeSink:                   g.feeSink,
-			RewardsPool:               g.rewardsPool,
-			RewardsLevel:              0,
-			RewardsRate:               0,
-			RewardsResidue:            0,
-			RewardsRecalculationRound: 0,
-		},
-		UpgradeState: bookkeeping.UpgradeState{
-			CurrentProtocol: g.protocol,
-		},
-		UpgradeVote:        bookkeeping.UpgradeVote{},
-		TxnCounter:         g.txnCounter + numTxnForBlock,
-		StateProofTracking: nil,
-	}
-
-	// Generate the transactions
-	transactions := make([]transactions.SignedTxnInBlock, 0, numTxnForBlock)
-
-	for i := uint64(0); i < numTxnForBlock; i++ {
-		txn, ad, err := g.generateTransaction(g.round, i)
-		if err != nil {
-			panic(fmt.Sprintf("failed to generate transaction: %v\n", err))
-		}
-		stib, err := header.EncodeSignedTxn(txn, ad)
-		if err != nil {
-			panic(fmt.Sprintf("failed to encode transaction: %v\n", err))
-		}
-		transactions = append(transactions, stib)
-	}
-
-	if numTxnForBlock != uint64(len(transactions)) {
-		panic("Unexpected number of transactions.")
-	}
-
-	cert := rpcs.EncodedBlockCert{
-		Block: bookkeeping.Block{
-			BlockHeader: header,
-			Payset:      transactions,
-		},
-		Certificate: agreement.Certificate{},
-	}
-
-	err := g.ledger.AddBlock(cert.Block, cert.Certificate)
-	if err != nil {
-		return err
-	}
-	// return the block with the requested round number
-	cert.Block.BlockHeader.Round = basics.Round(round)
-	block := protocol.EncodeMsgp(&cert)
-	if err != nil {
-		return err
-	}
-	// write the msgpack bytes for a block
-	_, err = output.Write(block)
-	if err != nil {
-		return err
-	}
-	g.finishRound(numTxnForBlock)
-	return nil
-}
-
 // WriteDeltas generates returns the deltas for payset.
 func (g *generator) WriteDeltas(output io.Writer, round uint64) error {
 	// the first generated round has no statedelta.
@@ -640,6 +485,41 @@ func (g *generator) WriteDeltas(output io.Writer, round uint64) error {
 	return nil
 }
 
+func (g *generator) WriteStatus(output io.Writer) error {
+	response := model.NodeStatusResponse{
+		LastRound: g.round + g.roundOffset,
+	}
+	return json.NewEncoder(output).Encode(response)
+}
+
+// Stop cleans up allocated resources.
+func (g *generator) Stop() {
+	g.ledger.Close()
+}
+
+// ---- transaction options vectors ----
+
+func getTransactionOptions() []interface{} {
+	return []interface{}{paymentTx, assetTx, applicationTx}
+}
+
+func getPaymentTxOptions() []interface{} {
+	return []interface{}{paymentAcctCreateTx, paymentPayTx}
+}
+
+func getAssetTxOptions() []interface{} {
+	return []interface{}{assetCreate, assetDestroy, assetOptin, assetClose, assetXfer}
+}
+
+func getAppTxOptions() []interface{} {
+	return []interface{}{
+		appSwapCreate, appSwapUpdate, appSwapDelete, appSwapOptin, appSwapCall, appSwapClose, appSwapClear,
+		appBoxesCreate, appBoxesUpdate, appBoxesDelete, appBoxesOptin, appBoxesCall, appBoxesClose, appBoxesClear,
+	}
+}
+
+// ---- Transaction Generation (Pay/Asset/Apps) ----
+
 func (g *generator) generateTransaction(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
 	selection, err := weightedSelection(g.transactionWeights, getTransactionOptions(), paymentTx)
 	if err != nil {
@@ -658,46 +538,7 @@ func (g *generator) generateTransaction(round uint64, intra uint64) (transaction
 	}
 }
 
-func (g *generator) txnForRound(round uint64) uint64 {
-	// There are no transactions in the 0th round
-	if round == 0 {
-		return 0
-	}
-	return g.config.TxnPerBlock
-}
-
-// finishRound tells the generator it can apply any pending state.
-func (g *generator) finishRound(txnCount uint64) {
-	g.txnCounter += txnCount
-
-	g.timestamp += consensusTimeMilli
-	g.round++
-
-	// Apply pending assets...
-	g.assets = append(g.assets, g.pendingAssets...)
-	g.pendingAssets = nil
-
-	// Apply pending apps...
-	for _, kind := range []appKind{appKindSwap, appKindBoxes} {
-		g.apps[kind] = append(g.apps[kind], g.pendingApps[kind]...)
-		g.pendingApps[kind] = nil
-	}
-}
-
-func signTxn(txn transactions.Transaction) transactions.SignedTxn {
-	stxn := transactions.SignedTxn{
-		Sig:      crypto.Signature{},
-		Msig:     crypto.MultisigSig{},
-		Lsig:     transactions.LogicSig{},
-		Txn:      txn,
-		AuthAddr: basics.Address{},
-	}
-
-	// TODO: Would it be useful to generate a random signature?
-	stxn.Sig[32] = 50
-
-	return stxn
-}
+// ---- 1. Pay Transactions ----
 
 // generatePaymentTxn creates a new payment transaction. The sender is always a genesis account, the receiver is random,
 // or a new account.
@@ -746,6 +587,27 @@ func (g *generator) generatePaymentTxnInternal(selection TxTypeID, round uint64,
 	g.numPayments++
 
 	txn := g.makePaymentTxn(g.makeTxnHeader(sender, round, intra), receiver, amount, basics.Address{})
+	return signTxn(txn), transactions.ApplyData{}, nil
+}
+
+// ---- 2. Asset Transactions ----
+
+func (g *generator) generateAssetTxn(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
+	start := time.Now()
+	selection, err := weightedSelection(g.assetTxWeights, getAssetTxOptions(), assetXfer)
+	if err != nil {
+		return transactions.SignedTxn{}, transactions.ApplyData{}, err
+	}
+
+	actual, txn := g.generateAssetTxnInternal(selection.(TxTypeID), round, intra)
+	defer g.recordData(actual, start)
+
+	// TODO: shouldn't we just return an error?
+	if txn.Type == "" {
+		fmt.Println("Empty asset transaction.")
+		os.Exit(1)
+	}
+
 	return signTxn(txn), transactions.ApplyData{}, nil
 }
 
@@ -903,26 +765,7 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 	return
 }
 
-func (g *generator) generateAssetTxn(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
-	start := time.Now()
-	selection, err := weightedSelection(g.assetTxWeights, getAssetTxOptions(), assetXfer)
-	if err != nil {
-		return transactions.SignedTxn{}, transactions.ApplyData{}, err
-	}
-
-	actual, txn := g.generateAssetTxnInternal(selection.(TxTypeID), round, intra)
-	defer g.recordData(actual, start)
-
-	// TODO: shouldn't we just return an error?
-	if txn.Type == "" {
-		fmt.Println("Empty asset transaction.")
-		os.Exit(1)
-	}
-
-	return signTxn(txn), transactions.ApplyData{}, nil
-}
-
-// ---- App Transactions ----
+// ---- 3. App Transactions ----
 
 func (g *generator) generateAppTxn(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
 	start := time.Now()
@@ -1010,4 +853,58 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 	g.balances[senderIndex] -= g.params.MinTxnFee
 
 	return actual, txn, nil
+}
+
+// ---- miscellaneous ----
+
+func track(id TxTypeID) (TxTypeID, time.Time) {
+	return id, time.Now()
+}
+
+func (g *generator) recordData(id TxTypeID, start time.Time) {
+	data := g.reportData[id]
+	data.GenerationCount++
+	data.GenerationTime += time.Since(start)
+	g.reportData[id] = data
+}
+
+func (g *generator) txnForRound(round uint64) uint64 {
+	// There are no transactions in the 0th round
+	if round == 0 {
+		return 0
+	}
+	return g.config.TxnPerBlock
+}
+
+// finishRound tells the generator it can apply any pending state.
+func (g *generator) finishRound(txnCount uint64) {
+	g.txnCounter += txnCount
+
+	g.timestamp += consensusTimeMilli
+	g.round++
+
+	// Apply pending assets...
+	g.assets = append(g.assets, g.pendingAssets...)
+	g.pendingAssets = nil
+
+	// Apply pending apps...
+	for _, kind := range []appKind{appKindSwap, appKindBoxes} {
+		g.apps[kind] = append(g.apps[kind], g.pendingApps[kind]...)
+		g.pendingApps[kind] = nil
+	}
+}
+
+func signTxn(txn transactions.Transaction) transactions.SignedTxn {
+	stxn := transactions.SignedTxn{
+		Sig:      crypto.Signature{},
+		Msig:     crypto.MultisigSig{},
+		Lsig:     transactions.LogicSig{},
+		Txn:      txn,
+		AuthAddr: basics.Address{},
+	}
+
+	// TODO: Would it be useful to generate a random signature?
+	stxn.Sig[32] = 50
+
+	return stxn
 }
