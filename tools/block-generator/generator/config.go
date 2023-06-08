@@ -104,6 +104,28 @@ const (
 	appTxTypeClear
 )
 
+func (a appTxType) String() string {
+	switch a {
+	case appTxTypeCreate:
+		return "Create"
+	case appTxTypeUpdate:
+		return "Update"
+	case appTxTypeDelete:
+		return "Delete"
+	case appTxTypeOptin:
+		return "Optin"
+	case appTxTypeCall:
+		return "Call"
+	case appTxTypeClose:
+		return "Close"
+	case appTxTypeClear:
+		return "Clear"
+	default:
+		// Return a default value for unknown types.
+		return "Unknown"
+	}
+}
+
 func parseAppTxType(txType TxTypeID) (isApp bool, kind appKind, tx appTxType, err error) {
 	parts := strings.Split(string(txType), "_")
 
