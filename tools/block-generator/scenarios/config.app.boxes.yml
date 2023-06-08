@@ -2,9 +2,9 @@ name: "App Create"
 tx_per_block: 100
 
 # transaction distribution
-tx_pay_fraction: 0.25
-tx_asset_fraction: 0.25
-tx_app_fraction: 0.5
+tx_pay_fraction: 0.01
+tx_asset_fraction: 0.01
+tx_app_fraction: 0.98
 
 # payment config
 pay_acct_create_fraction: 0.02

@@ -1,4 +1,6 @@
-SCENARIO = scenarios/config.app.create.yml # test_config.yml
+# scenarios/config.app.boxes.yml # scenarios/config.app.create.yml # test_config.yml
+
+SCENARIO = scenarios/config.payment.full.yml
 SKIP = --skip-runner
 RESETDB = --reset-db
 REPORTS = RUN_RUNNER_OUTPUTS

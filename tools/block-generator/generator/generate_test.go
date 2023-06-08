@@ -260,6 +260,68 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, appKindBoxes, ad.kind)
 }
 
+// func TestAppTxRecord(t *testing.T) {
+// 	partitiontest.PartitionTest(t)
+// 	t.Parallel()
+
+// 	var (
+// 		oneBoxCreate  = map[TxTypeID]uint64{appBoxesCreate: 1}
+// 		oneSwapCreate = map[TxTypeID]uint64{appSwapCreate: 1}
+// 		oneBoxOptin   = map[TxTypeID]uint64{
+// 			appBoxesOptin:          1,
+// 			effectPaymentTxSibling: 1,
+// 			effectInnerTx:          1,
+// 		}
+// 	)
+
+// 	var testcases = []struct {
+// 		name   string
+// 		txType TxTypeID
+// 		deltas map[TxTypeID]uint64
+// 		err    error
+// 	}{
+// 		{
+// 			name:   "app swap create 1",
+// 			txType: appSwapCreate,
+// 			deltas: oneSwapCreate,
+// 		},
+// 		{
+// 			name:   "app boxes create 1",
+// 			txType: appBoxesCreate,
+// 			deltas: oneBoxCreate,
+// 		},
+// 		{
+// 			name:   "app boxes optin 1",
+// 			txType: appBoxesOptin,
+// 			deltas: oneBoxOptin,
+// 		},
+// 	}
+
+// 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
+// 	shadowReporter := make(map[TxTypeID]uint64)
+
+// 	assertEqualReporters := func() {
+// 		require.Len(t, g.reportData, len(shadowReporter))
+// 		for k, v := range shadowReporter {
+// 			require.Contains(t, k, g.reportData)
+// 			require.Equal(t, v, g.reportData[k])
+// 		}
+// 	}
+
+// 	for _, tc := range testcases {
+// 		tc := tc
+// 		t.Run(tc.name, func(t *testing.T) {
+// 			var intra uint64 = 0
+// 			actual, txn, err := g.generateAppTxn(1337, intra)
+// 			require.NoError(t, err)
+// 			require.Equal(t, )
+// 			require.Equal(t, protocol.ApplicationCallTx, txn.Type)
+// 			require.Equal(t, tc.deltas, g.txRecord)
+// 		})
+// 	}
+
+// }
+
 func TestWriteRoundZero(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	var testcases = []struct {
@@ -530,16 +592,18 @@ func TestRecordAppConsequences(t *testing.T) {
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
 
 	id := TxTypeID("test")
-	err := g.recordIncludingEffects(id, time.Now())
+	txCount, err := g.recordIncludingEffects(id, time.Now())
 	require.Error(t, err, "no effects for TxTypeId test")
+	require.Equal(t, uint64(0), txCount)
 	data, ok := g.reportData[id]
 	require.True(t, ok)
 	require.Equal(t, uint64(1), data.GenerationCount)
 	require.Len(t, g.reportData, 1)
 
 	id = appBoxesOptin
-	err = g.recordIncludingEffects(id, time.Now())
+	txCount, err = g.recordIncludingEffects(id, time.Now())
 	require.NoError(t, err)
+	require.Equal(t, uint64(1), txCount)
 	data, ok = g.reportData[id]
 	require.True(t, ok)
 	require.Equal(t, uint64(1), data.GenerationCount)
