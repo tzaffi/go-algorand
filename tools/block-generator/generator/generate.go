@@ -37,7 +37,7 @@ import (
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/data/bookkeeping"
 	"github.com/algorand/go-algorand/data/committee"
-	"github.com/algorand/go-algorand/data/transactions"
+	txn "github.com/algorand/go-algorand/data/transactions"
 	"github.com/algorand/go-algorand/rpcs"
 )
 
@@ -57,12 +57,16 @@ var clearSwap string
 
 // ---- init ----
 
+// effects is a map that contains the hard-coded non-trivial
+// consequents of a transaction type:
+//
+// appBoxesOptin: 1 payment tx, 1 inner tx
 var effects map[TxTypeID][]TxEffect
 
 func init() {
 	effects = make(map[TxTypeID][]TxEffect)
 	effects[appBoxesOptin] = []TxEffect{
-		{effectPaymentTxSibling, 1}, {effectInnerTx, 1},
+		{effectPaymentTxSibling, 1}, {effectInnerTx, 2},
 	}
 }
 
@@ -365,13 +369,16 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 		}
 
 		// Generate the transactions
-		transactions := make([]transactions.SignedTxnInBlock, 0, numTxnForBlock)
-		for i := uint64(0); i < numTxnForBlock; i++ {
-			txn, ad, err := g.generateTransaction(g.round, i)
+		transactions := make([]txn.SignedTxnInBlock, 0, numTxnForBlock)
+		for intra := uint64(0); intra < numTxnForBlock; {
+			var transaction txn.SignedTxn
+			var ad txn.ApplyData
+			var err error
+			transaction, ad, intra, err = g.generateTransaction(g.round, intra)
 			if err != nil {
 				panic(fmt.Sprintf("failed to generate transaction: %v\n", err))
 			}
-			stib, err := cert.Block.BlockHeader.EncodeSignedTxn(txn, ad)
+			stib, err := cert.Block.BlockHeader.EncodeSignedTxn(transaction, ad)
 			if err != nil {
 				panic(fmt.Sprintf("failed to encode transaction: %v\n", err))
 			}
@@ -531,10 +538,10 @@ func getAppTxOptions() []interface{} {
 
 // ---- Transaction Generation (Pay/Asset/Apps) ----
 
-func (g *generator) generateTransaction(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
+func (g *generator) generateTransaction(round uint64, intra uint64) (txn.SignedTxn, txn.ApplyData, uint64 /* nextIntra */, error) {
 	selection, err := weightedSelection(g.transactionWeights, getTransactionOptions(), paymentTx)
 	if err != nil {
-		return transactions.SignedTxn{}, transactions.ApplyData{}, err
+		return txn.SignedTxn{}, txn.ApplyData{}, intra, err
 	}
 
 	switch selection {
@@ -545,7 +552,7 @@ func (g *generator) generateTransaction(round uint64, intra uint64) (transaction
 	case applicationTx:
 		return g.generateAppTxn(round, intra)
 	default:
-		return transactions.SignedTxn{}, transactions.ApplyData{}, fmt.Errorf("no generator available for %s", selection)
+		return txn.SignedTxn{}, txn.ApplyData{}, intra, fmt.Errorf("no generator available for %s", selection)
 	}
 }
 
@@ -553,15 +560,15 @@ func (g *generator) generateTransaction(round uint64, intra uint64) (transaction
 
 // generatePaymentTxn creates a new payment transaction. The sender is always a genesis account, the receiver is random,
 // or a new account.
-func (g *generator) generatePaymentTxn(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
+func (g *generator) generatePaymentTxn(round uint64, intra uint64) (txn.SignedTxn, txn.ApplyData, uint64 /* nextIntra */, error) {
 	selection, err := weightedSelection(g.payTxWeights, getPaymentTxOptions(), paymentPayTx)
 	if err != nil {
-		return transactions.SignedTxn{}, transactions.ApplyData{}, err
+		return txn.SignedTxn{}, txn.ApplyData{}, intra, err
 	}
 	return g.generatePaymentTxnInternal(selection.(TxTypeID), round, intra)
 }
 
-func (g *generator) generatePaymentTxnInternal(selection TxTypeID, round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
+func (g *generator) generatePaymentTxnInternal(selection TxTypeID, round uint64, intra uint64) (txn.SignedTxn, txn.ApplyData, uint64 /* nextIntra */, error) {
 	defer g.recordData(track(selection))
 	minBal := g.params.MinBalance
 
@@ -585,6 +592,7 @@ func (g *generator) generatePaymentTxnInternal(selection TxTypeID, round uint64,
 	// Select a sender from genesis account
 	sendIndex := g.numPayments % g.config.NumGenesisAccounts
 	if g.balances[sendIndex] < (total + minBal) {
+		// TODO: shouldn't we just return an error?
 		fmt.Printf("\n\ngeneratePaymentTxnInternal(): the sender account does not have enough algos for the transfer. idx %d, payment number %d\n\n", sendIndex, g.numPayments)
 		os.Exit(1)
 	}
@@ -597,36 +605,36 @@ func (g *generator) generatePaymentTxnInternal(selection TxTypeID, round uint64,
 
 	g.numPayments++
 
-	txn := g.makePaymentTxn(g.makeTxnHeader(sender, round, intra), receiver, amount, basics.Address{})
-	return signTxn(txn), transactions.ApplyData{}, nil
+	transaction := g.makePaymentTxn(g.makeTxnHeader(sender, round, intra), receiver, amount, basics.Address{})
+	return signTxn(transaction), txn.ApplyData{}, intra + 1, nil
 }
 
 // ---- 2. Asset Transactions ----
 
-func (g *generator) generateAssetTxn(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
+func (g *generator) generateAssetTxn(round uint64, intra uint64) (txn.SignedTxn, txn.ApplyData, uint64 /* nextIntra */, error) {
 	start := time.Now()
 	selection, err := weightedSelection(g.assetTxWeights, getAssetTxOptions(), assetXfer)
 	if err != nil {
-		return transactions.SignedTxn{}, transactions.ApplyData{}, err
+		return txn.SignedTxn{}, txn.ApplyData{}, intra, err
 	}
 
-	actual, txn := g.generateAssetTxnInternal(selection.(TxTypeID), round, intra)
+	actual, transaction := g.generateAssetTxnInternal(selection.(TxTypeID), round, intra)
 	defer g.recordData(actual, start)
 
 	// TODO: shouldn't we just return an error?
-	if txn.Type == "" {
+	if transaction.Type == "" {
 		fmt.Println("Empty asset transaction.")
 		os.Exit(1)
 	}
 
-	return signTxn(txn), transactions.ApplyData{}, nil
+	return signTxn(transaction), txn.ApplyData{}, intra + 1, nil
 }
 
-func (g *generator) generateAssetTxnInternal(txType TxTypeID, round uint64, intra uint64) (actual TxTypeID, txn transactions.Transaction) {
+func (g *generator) generateAssetTxnInternal(txType TxTypeID, round uint64, intra uint64) (actual TxTypeID, txn txn.Transaction) {
 	return g.generateAssetTxnInternalHint(txType, round, intra, 0, nil)
 }
 
-func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, intra uint64, hintIndex uint64, hint *assetData) (actual TxTypeID, txn transactions.Transaction) {
+func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, intra uint64, hintIndex uint64, hint *assetData) (actual TxTypeID, txn txn.Transaction) {
 	actual = txType
 	// If there are no assets the next operation needs to be a create.
 	numAssets := uint64(len(g.assets))
@@ -778,43 +786,51 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 
 // ---- 3. App Transactions ----
 
-func (g *generator) generateAppTxn(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
+func (g *generator) generateAppTxn(round uint64, intra uint64) (txn.SignedTxn, txn.ApplyData, uint64 /* nextIntra */, error) {
 	start := time.Now()
 	selection, err := weightedSelection(g.appTxWeights, getAppTxOptions(), appSwapCall)
 	if err != nil {
-		return transactions.SignedTxn{}, transactions.ApplyData{}, err
+		return txn.SignedTxn{}, txn.ApplyData{}, intra, err
 	}
 
-	actual, txn, err := g.generateAppCallInternal(selection.(TxTypeID), round, intra, 0, nil)
+	actual, transaction, err := g.generateAppCallInternal(selection.(TxTypeID), round, intra, 0, nil)
 	if err != nil {
-		return transactions.SignedTxn{}, transactions.ApplyData{}, fmt.Errorf("unexpected error received from generateAppCallInternal(): %w", err)
+		return txn.SignedTxn{}, txn.ApplyData{}, intra, fmt.Errorf("unexpected error received from generateAppCallInternal(): %w", err)
 	}
-	if txn.Type == "" {
-		return transactions.SignedTxn{}, transactions.ApplyData{}, fmt.Errorf("missing transaction type for app transaction")
+	if transaction.Type == "" {
+		return txn.SignedTxn{}, txn.ApplyData{}, intra, fmt.Errorf("missing transaction type for app transaction")
 	}
 
-	defer g.recordData(actual, start)
+	if _, ok := effects[actual]; !ok {
+		g.recordData(actual, start)
+		intra++
+	} else {
+		txCount, err := g.recordIncludingEffects(actual, start)
+		if err != nil {
+			return txn.SignedTxn{}, txn.ApplyData{}, intra + txCount, fmt.Errorf("failed to record app transaction %s: %w", actual, err)
+		}
+	}
 
-	return signTxn(txn), transactions.ApplyData{}, nil
+	return signTxn(transaction), txn.ApplyData{}, intra, nil
 }
 
-func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintIndex uint64, hintApp *appData) (TxTypeID, transactions.Transaction, error) {
+func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintIndex uint64, hintApp *appData) (TxTypeID, txn.Transaction, error) {
 	actual := txType
 
 	isApp, kind, appTx, err := parseAppTxType(txType)
 	if err != nil {
-		return "", transactions.Transaction{}, err
+		return "", txn.Transaction{}, err
 	}
 	if !isApp {
-		return "", transactions.Transaction{}, fmt.Errorf("should be an app but not parsed that way: %v", txType)
+		return "", txn.Transaction{}, fmt.Errorf("should be an app but not parsed that way: %v", txType)
 	}
 	if appTx != appTxTypeCreate {
-		return "", transactions.Transaction{}, fmt.Errorf("invalid transaction type forapp %v", appTx)
+		return "", txn.Transaction{}, fmt.Errorf("invalid transaction type forapp %s", appTx)
 	}
 
 	var senderIndex uint64
 	if hintApp != nil {
-		return "", transactions.Transaction{}, fmt.Errorf("not ready for hint app %v", hintApp)
+		return "", txn.Transaction{}, fmt.Errorf("not ready for hint app %v", hintApp)
 	} else {
 		senderIndex = rand.Uint64() % g.numAccounts
 	}
@@ -826,7 +842,7 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 		actualAppTx = appTxTypeCreate
 	}
 
-	var txn transactions.Transaction
+	var transaction txn.Transaction
 	if actualAppTx == appTxTypeCreate {
 		numApps += uint64(len(g.pendingApps[kind]))
 		senderIndex = numApps % g.config.NumGenesisAccounts
@@ -839,7 +855,7 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 			approval, clear = approvalBoxes, clearBoxes
 		}
 
-		txn = g.makeAppCreateTxn(senderAcct, round, intra, approval, clear)
+		transaction = g.makeAppCreateTxn(senderAcct, round, intra, approval, clear)
 
 		appID := g.txnCounter + intra + 1
 		// appName := fmt.Sprintf("app #%d", appID)
@@ -859,11 +875,11 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 
 	// TODO: this isn't correct for general app calls:
 	if g.balances[senderIndex] < g.params.MinTxnFee {
-		return "", transactions.Transaction{}, fmt.Errorf("the sender account does not have enough algos for the app call. idx %d, app transaction type %v, num %d\n\n", senderIndex, txType, g.reportData[txType].GenerationCount)
+		return "", txn.Transaction{}, fmt.Errorf("the sender account does not have enough algos for the app call. idx %d, app transaction type %v, num %d\n\n", senderIndex, txType, g.reportData[txType].GenerationCount)
 	}
 	g.balances[senderIndex] -= g.params.MinTxnFee
 
-	return actual, txn, nil
+	return actual, transaction, nil
 }
 
 // ---- metric data recorders ----
@@ -883,15 +899,17 @@ func (g *generator) recordOccurrences(id TxTypeID, count uint64, start time.Time
 	g.reportData[id] = data
 }
 
-func (g *generator) recordIncludingEffects(id TxTypeID, start time.Time) error {
-	g.recordData(id, start)
+func (g *generator) recordIncludingEffects(id TxTypeID, start time.Time) (uint64, error) {
+	g.recordData(id, start) // this may be a bug!!!
+	count := uint64(1)
 	if consequences, ok := effects[id]; ok {
 		for _, effect := range consequences {
+			count += effect.count
 			g.recordOccurrences(effect.txType, effect.count, start)
 		}
-		return nil
+		return count, nil
 	}
-	return fmt.Errorf("no effects for TxTypeId %v", id)
+	return 1, fmt.Errorf("no effects for TxTypeId %v", id)
 }
 
 // ---- miscellaneous ----
@@ -922,12 +940,12 @@ func (g *generator) finishRound(txnCount uint64) {
 	}
 }
 
-func signTxn(txn transactions.Transaction) transactions.SignedTxn {
-	stxn := transactions.SignedTxn{
+func signTxn(transaction txn.Transaction) txn.SignedTxn {
+	stxn := txn.SignedTxn{
 		Sig:      crypto.Signature{},
 		Msig:     crypto.MultisigSig{},
-		Lsig:     transactions.LogicSig{},
-		Txn:      txn,
+		Lsig:     txn.LogicSig{},
+		Txn:      transaction,
 		AuthAddr: basics.Address{},
 	}
 
