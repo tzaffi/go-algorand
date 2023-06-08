@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/data/bookkeeping"
@@ -232,6 +233,31 @@ func TestAppCreate(t *testing.T) {
 	require.Equal(t, uint64(1001), holding.appIndex)
 	require.Equal(t, ad.appID, holding.appIndex)
 	require.Equal(t, appKindSwap, ad.kind)
+}
+
+func TestAppBoxesOptin(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	t.Parallel()
+
+	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
+
+	// app call transaction creating appBoxes
+	actual, txn, err := g.generateAppCallInternal(appBoxesOptin, 1, 0, 0, nil)
+	require.NoError(t, err)
+	require.Equal(t, appBoxesCreate, actual)
+	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
+	require.Len(t, g.apps, 0)
+	require.Len(t, g.pendingApps, 1)
+	require.Len(t, g.pendingApps[appKindBoxes], 1)
+	require.Len(t, g.pendingApps[appKindSwap], 0)
+	require.Len(t, g.pendingApps[appKindBoxes][0].holdings, 1)
+	require.Len(t, g.pendingApps[appKindBoxes][0].holders, 1)
+	ad := *g.pendingApps[appKindBoxes][0]
+	holding := *ad.holdings[0]
+	require.Equal(t, holding, *ad.holders[0])
+	require.Equal(t, uint64(1001), holding.appIndex)
+	require.Equal(t, ad.appID, holding.appIndex)
+	require.Equal(t, appKindBoxes, ad.kind)
 }
 
 func TestWriteRoundZero(t *testing.T) {
@@ -461,4 +487,67 @@ func TestHandlers(t *testing.T) {
 			require.Contains(t, w.Body.String(), testcase.err)
 		})
 	}
+}
+
+func TestRecordData(t *testing.T) {
+	gen := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
+
+	id := TxTypeID("test")
+	data, ok := gen.reportData[id]
+	require.False(t, ok)
+
+	gen.recordData(id, time.Now())
+	data, ok = gen.reportData[id]
+	require.True(t, ok)
+	require.Equal(t, uint64(1), data.GenerationCount)
+
+	gen.recordData(id, time.Now())
+	data, ok = gen.reportData[id]
+	require.True(t, ok)
+	require.Equal(t, uint64(2), data.GenerationCount)
+
+}
+
+func TestRecordOccurrences(t *testing.T) {
+	gen := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
+
+	id := TxTypeID("test")
+	data, ok := gen.reportData[id]
+	require.False(t, ok)
+
+	gen.recordOccurrences(id, 100, time.Now())
+	data, ok = gen.reportData[id]
+	require.True(t, ok)
+	require.Equal(t, uint64(100), data.GenerationCount)
+
+	gen.recordOccurrences(id, 200, time.Now())
+	data, ok = gen.reportData[id]
+	require.True(t, ok)
+	require.Equal(t, uint64(300), data.GenerationCount)
+}
+
+func TestRecordAppConsequences(t *testing.T) {
+	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
+
+	id := TxTypeID("test")
+	err := g.recordIncludingEffects(id, time.Now())
+	require.Error(t, err, "no effects for TxTypeId test")
+	data, ok := g.reportData[id]
+	require.True(t, ok)
+	require.Equal(t, uint64(1), data.GenerationCount)
+	require.Len(t, g.reportData, 1)
+
+	id = appBoxesOptin
+	err = g.recordIncludingEffects(id, time.Now())
+	require.NoError(t, err)
+	data, ok = g.reportData[id]
+	require.True(t, ok)
+	require.Equal(t, uint64(1), data.GenerationCount)
+	data, ok = g.reportData[effectPaymentTxSibling]
+	require.True(t, ok)
+	require.Equal(t, uint64(1), data.GenerationCount)
+	data, ok = g.reportData[effectInnerTx]
+	require.True(t, ok)
+	require.Equal(t, uint64(1), data.GenerationCount)
+	require.Len(t, g.reportData, 4)
 }

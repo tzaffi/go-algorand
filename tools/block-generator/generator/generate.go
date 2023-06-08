@@ -55,6 +55,17 @@ var approvalSwap string
 //go:embed teal/swap_clear.teal
 var clearSwap string
 
+// ---- init ----
+
+var effects map[TxTypeID][]TxEffect
+
+func init() {
+	effects = make(map[TxTypeID][]TxEffect)
+	effects[appBoxesOptin] = []TxEffect{
+		{effectPaymentTxSibling, 1}, {effectInnerTx, 1},
+	}
+}
+
 // ---- constructors ----
 
 // MakeGenerator initializes the Generator object.
@@ -781,7 +792,7 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) (transactions.Sig
 	if txn.Type == "" {
 		return transactions.SignedTxn{}, transactions.ApplyData{}, fmt.Errorf("missing transaction type for app transaction")
 	}
-	// Z TODO: Entry point to the data collector:
+
 	defer g.recordData(actual, start)
 
 	return signTxn(txn), transactions.ApplyData{}, nil
@@ -855,18 +866,35 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 	return actual, txn, nil
 }
 
-// ---- miscellaneous ----
+// ---- metric data recorders ----
 
 func track(id TxTypeID) (TxTypeID, time.Time) {
 	return id, time.Now()
 }
 
 func (g *generator) recordData(id TxTypeID, start time.Time) {
+	g.recordOccurrences(id, 1, start)
+}
+
+func (g *generator) recordOccurrences(id TxTypeID, count uint64, start time.Time) {
 	data := g.reportData[id]
-	data.GenerationCount++
+	data.GenerationCount += count
 	data.GenerationTime += time.Since(start)
 	g.reportData[id] = data
 }
+
+func (g *generator) recordIncludingEffects(id TxTypeID, start time.Time) error {
+	g.recordData(id, start)
+	if consequences, ok := effects[id]; ok {
+		for _, effect := range consequences {
+			g.recordOccurrences(effect.txType, effect.count, start)
+		}
+		return nil
+	}
+	return fmt.Errorf("no effects for TxTypeId %v", id)
+}
+
+// ---- miscellaneous ----
 
 func (g *generator) txnForRound(round uint64) uint64 {
 	// There are no transactions in the 0th round

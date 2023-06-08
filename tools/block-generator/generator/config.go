@@ -70,7 +70,10 @@ const (
 	appBoxesClose  TxTypeID = "app_boxes_close"
 	appBoxesClear  TxTypeID = "app_boxes_clear"
 
-	// TODO: consider an app that creates/destroys an app during opup
+	// Special TxTypeID's recording effects of higher level transactions
+	// effectBoxesCreated TxTypeID = "effect_boxes_created" // not including as don't want to add to the txn summ
+	effectPaymentTxSibling TxTypeID = "effect_payment_sibling"
+	effectInnerTx          TxTypeID = "effect_inner_tx"
 
 	// Defaults
 	defaultGenesisAccountsCount         uint64 = 1000

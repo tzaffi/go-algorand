@@ -141,3 +141,9 @@ type TxData struct {
 	GenerationTime  time.Duration `json:"generation_time_milli"`
 	GenerationCount uint64        `json:"num_generated"`
 }
+
+// TxEffect summarizes a txn type count caused by a root transaction.
+type TxEffect struct {
+	txType TxTypeID
+	count  uint64
+}
