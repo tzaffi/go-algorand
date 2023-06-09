@@ -3,7 +3,8 @@
 SCENARIO = scenarios/config.payment.full.yml
 SKIP = --skip-runner
 RESETDB = --reset-db
-REPORTS = RUN_RUNNER_OUTPUTS
+REPORTS = ../../tmp/RUN_RUNNER_OUTPUTS
+DURATION = 30s
 
 debug-blockgen:
 	python run_runner.py \
@@ -11,7 +12,7 @@ debug-blockgen:
 	--scenario $(SCENARIO) \
 	--report-directory $(REPORTS) \
 	--keep-alive $(SKIP) \
-	--test-duration 30s \
+	--test-duration $(DURATION) \
 	$(RESETDB)
 
 clean-reports:
@@ -27,8 +28,11 @@ run-runner:
 	./block-generator runner --conduit-binary ./conduit \
 	--log-level trace \
 	--keep-data-dir \
-	--report-directory $(REPORTS) \
-	--test-duration 30s --log-level trace \
+	--test-duration $(DURATION) \
+	--log-level trace \
 	--postgres-connection-string "host=localhost user=algorand password=algorand dbname=generator_db port=15432 sslmode=disable" \
 	--scenario $(SCENARIO) \
-	$(RESETDB)
+	$(RESETDB) \
+	--report-directory $(REPORTS)
+
+
