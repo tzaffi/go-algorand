@@ -36,4 +36,12 @@ run-runner:
 	$(RESETDB) \
 	--report-directory $(REPORTS)
 
+pre-git-push:
+	mv _go.mod go.mod
+	mv _go.sum go.sum
+	cd ../../ && make tidy
 
+post-git-push:
+	mv go.mod _go.mod
+	mv go.sum _go.sum
+	cd ../../ && make tidy && go get github.com/lib/pq

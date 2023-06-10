@@ -156,10 +156,18 @@ func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64,
 	return createTxn.Txn()
 }
 
-func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra uint64, appIndex uint64) txn.Transaction {
+func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra uint64, appIndex uint64) []txn.SignedTxn {
 	optInTxn := g.makeTestTxn(sender, round, intra)
 	optInTxn.Type = protocol.ApplicationCallTx
 	optInTxn.ApplicationID = basics.AppIndex(appIndex)
 	optInTxn.OnCompletion = txn.OptInOC
-	return optInTxn.Txn()
+
+	// TODO: these may not make sense for the swap optin
+	paySibTxn := g.makeTestTxn(sender, round, intra)
+	paySibTxn.Type = protocol.PaymentTx
+	paySibTxn.Receiver = basics.AppIndex(appIndex).Address()
+	paySibTxn.Fee = basics.MicroAlgos{Raw: 2000}
+	paySibTxn.Amount = uint64(2000)
+
+	return txntest.Group(&optInTxn, &paySibTxn)
 }

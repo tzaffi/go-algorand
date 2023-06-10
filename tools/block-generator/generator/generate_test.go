@@ -232,9 +232,13 @@ func TestAppCreate(t *testing.T) {
 	round, intra := uint64(1337), uint64(0)
 
 	// app call transaction creating appBoxes
-	actual, txn, err := g.generateAppCallInternal(appBoxesCreate, round, intra, 0, nil)
+	actual, sgnTxns, err := g.generateAppCallInternal(appBoxesCreate, round, intra, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCreate, actual)
+
+	require.Len(t, sgnTxns, 1)
+	txn := sgnTxns[0].Txn
+
 	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
 	require.Equal(t, basics.AppIndex(0), txn.ApplicationCallTxnFields.ApplicationID)
 	require.Equal(t, assembled.boxesApproval, txn.ApplicationCallTxnFields.ApprovalProgram)
@@ -259,9 +263,13 @@ func TestAppCreate(t *testing.T) {
 
 	// app call transaction creating appSwap
 	intra = 1
-	actual, txn, err = g.generateAppCallInternal(appSwapCreate, round, intra, 0, nil)
+	actual, sgnTxns, err = g.generateAppCallInternal(appSwapCreate, round, intra, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, appSwapCreate, actual)
+
+	require.Len(t, sgnTxns, 1)
+	txn = sgnTxns[0].Txn
+
 	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
 	require.Equal(t, basics.AppIndex(0), txn.ApplicationCallTxnFields.ApplicationID)
 	require.Equal(t, assembled.swapsApproval, txn.ApplicationCallTxnFields.ApprovalProgram)
@@ -295,9 +303,13 @@ func TestAppBoxesOptin(t *testing.T) {
 	round, intra := uint64(1337), uint64(0)
 
 	// app call transaction opting into boxes gets replaced by creating appBoxes
-	actual, txn, err := g.generateAppCallInternal(appBoxesOptin, round, intra, 0, nil)
+	actual, sgnTxns, err := g.generateAppCallInternal(appBoxesOptin, round, intra, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCreate, actual)
+
+	require.Len(t, sgnTxns, 1)
+	txn := sgnTxns[0].Txn
+
 	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
 	require.Equal(t, basics.AppIndex(0), txn.ApplicationCallTxnFields.ApplicationID)
 	require.Equal(t, assembled.boxesApproval, txn.ApplicationCallTxnFields.ApprovalProgram)
@@ -323,9 +335,16 @@ func TestAppBoxesOptin(t *testing.T) {
 	// 2nd attempt to optin doesn't get replaced
 	intra += 1
 
-	actual, txn, err = g.generateAppCallInternal(appBoxesOptin, round, intra, 0, nil)
+	actual, sgnTxns, err = g.generateAppCallInternal(appBoxesOptin, round, intra, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, appBoxesOptin, actual)
+
+	require.Len(t, sgnTxns, 2)
+	pay := sgnTxns[1].Txn
+	require.Equal(t, protocol.PaymentTx, pay.Type)
+	require.NotEqual(t, basics.Address{}.String(), pay.Sender.String())
+
+	txn = sgnTxns[0].Txn
 	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
 	require.Equal(t, basics.AppIndex(1001), txn.ApplicationCallTxnFields.ApplicationID)
 	require.Equal(t, []byte(nil), txn.ApplicationCallTxnFields.ApprovalProgram)
@@ -348,12 +367,20 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(4), numTxns)
 
-	// 2nd attempt to optin doesn't get replaced
+	// 3rd attempt to optin doesn't get replaced
 	intra += numTxns
 
-	actual, txn, err = g.generateAppCallInternal(appBoxesOptin, round, intra, 0, nil)
+	actual, sgnTxns, err = g.generateAppCallInternal(appBoxesOptin, round, intra, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, appBoxesOptin, actual)
+
+	require.Len(t, sgnTxns, 2)
+
+	pay = sgnTxns[1].Txn
+	require.Equal(t, protocol.PaymentTx, pay.Type)
+	require.NotEqual(t, basics.Address{}.String(), pay.Sender.String())
+
+	txn = sgnTxns[0].Txn
 	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
 	require.Equal(t, basics.AppIndex(1001), txn.ApplicationCallTxnFields.ApplicationID)
 	require.Equal(t, []byte(nil), txn.ApplicationCallTxnFields.ApprovalProgram)
@@ -699,27 +726,33 @@ func TestRecordOccurrences(t *testing.T) {
 func TestRecordAppConsequences(t *testing.T) {
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
 
-	id := TxTypeID("test")
-	txCount, err := g.recordIncludingEffects(id, time.Now())
+	txTypeId := TxTypeID("test")
+	txCount, err := g.recordIncludingEffects(txTypeId, time.Now())
 	require.Error(t, err, "no effects for TxTypeId test")
-	require.Equal(t, uint64(0), txCount)
-	data, ok := g.reportData[id]
+
+	// recordIncludingEffects always records the root txTypeId
+	require.Equal(t, uint64(1), txCount)
+	data, ok := g.reportData[txTypeId]
 	require.True(t, ok)
 	require.Equal(t, uint64(1), data.GenerationCount)
 	require.Len(t, g.reportData, 1)
 
-	id = appBoxesOptin
-	txCount, err = g.recordIncludingEffects(id, time.Now())
+	txTypeId = appBoxesOptin
+	txCount, err = g.recordIncludingEffects(txTypeId, time.Now())
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), txCount)
-	data, ok = g.reportData[id]
+	require.Equal(t, uint64(4), txCount)
+
+	require.Len(t, g.reportData, 4)
+
+	data, ok = g.reportData[txTypeId]
 	require.True(t, ok)
 	require.Equal(t, uint64(1), data.GenerationCount)
+
 	data, ok = g.reportData[effectPaymentTxSibling]
 	require.True(t, ok)
 	require.Equal(t, uint64(1), data.GenerationCount)
+
 	data, ok = g.reportData[effectInnerTx]
 	require.True(t, ok)
-	require.Equal(t, uint64(1), data.GenerationCount)
-	require.Len(t, g.reportData, 4)
+	require.Equal(t, uint64(2), data.GenerationCount)
 }

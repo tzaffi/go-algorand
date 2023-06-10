@@ -121,15 +121,17 @@ label15: // trying to optin with non-zero balance and when app already exists
 	&&
 	assert
 
-	gtxn 1 Sender
-	global CreatorAddress
-	==
-	assert // 2nd txn in the group must be a pymt to the app for .002 Algos from the creator
-
+	// we don't want to limit the generator to only allow the creator to be the sender
+	// so the following is commented out:
+	// gtxn 1 Sender
+	// global CreatorAddress
+	// ==
+	// assert // 2nd txn in the group must be a pymt to the app for .002 Algos from the creator
 	gtxn 1 Fee
+
 	intc 4 // 2000
 	==
-	assert
+	assert // fee must be 2000
 
 	itxn_begin
 	intc_2 // 1
