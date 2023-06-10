@@ -155,3 +155,11 @@ func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64,
 
 	return createTxn.Txn()
 }
+
+func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra uint64, appIndex uint64) txn.Transaction {
+	optInTxn := g.makeTestTxn(sender, round, intra)
+	optInTxn.Type = protocol.ApplicationCallTx
+	optInTxn.ApplicationID = basics.AppIndex(appIndex)
+	optInTxn.OnCompletion = txn.OptInOC
+	return optInTxn.Txn()
+}

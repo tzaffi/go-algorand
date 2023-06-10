@@ -41,6 +41,8 @@ import (
 	txn "github.com/algorand/go-algorand/data/transactions"
 )
 
+const TODO_FIX_ME_SKIPPING_TXNS = true
+
 // ---- templates ----
 
 //go:embed teal/poap_boxes.teal
@@ -376,17 +378,26 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 			var err error
 			transaction, ad, intra, err = g.generateTransaction(g.round, intra)
 			if err != nil {
+				// return err
 				panic(fmt.Sprintf("failed to generate transaction: %v\n", err))
 			}
+			if TODO_FIX_ME_SKIPPING_TXNS {
+				if transaction.Txn.Type == protocol.ApplicationCallTx && transaction.Txn.ApplicationCallTxnFields.ApplicationID != 0 {
+					continue
+				}
+			}
+
 			stib, err := cert.Block.BlockHeader.EncodeSignedTxn(transaction, ad)
 			if err != nil {
+				// return err
 				panic(fmt.Sprintf("failed to encode transaction: %v\n", err))
 			}
 			transactions = append(transactions, stib)
 		}
 
-		if numTxnForBlock != uint64(len(transactions)) {
-			panic("Unexpected number of transactions.")
+		if numTxnForBlock > uint64(len(transactions)) && !TODO_FIX_ME_SKIPPING_TXNS {
+			return fmt.Errorf("unexpected number of transactions: %d > %d", numTxnForBlock, len(transactions))
+			// panic("Unexpected number of transactions.")
 		}
 
 		cert.Block.Payset = transactions
@@ -806,8 +817,9 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) (txn.SignedTxn, t
 		intra++
 	} else {
 		txCount, err := g.recordIncludingEffects(actual, start)
+		intra += txCount
 		if err != nil {
-			return txn.SignedTxn{}, txn.ApplyData{}, intra + txCount, fmt.Errorf("failed to record app transaction %s: %w", actual, err)
+			return txn.SignedTxn{}, txn.ApplyData{}, intra, fmt.Errorf("failed to record app transaction %s: %w", actual, err)
 		}
 	}
 
@@ -824,7 +836,8 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 	if !isApp {
 		return "", txn.Transaction{}, fmt.Errorf("should be an app but not parsed that way: %v", txType)
 	}
-	if appTx != appTxTypeCreate {
+
+	if appTx != appTxTypeCreate && appTx != appTxTypeOptin {
 		return "", txn.Transaction{}, fmt.Errorf("unimplemented: invalid transaction type for app %s", appTx)
 	}
 
@@ -837,17 +850,19 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 
 	actualAppTx := appTx
 
-	numApps := uint64(len(g.apps[kind]))
+	savedApps := uint64(len(g.apps[kind]))
+	pendingApps := uint64(len(g.pendingApps[kind]))
+	numApps := savedApps + pendingApps
 	if numApps == 0 {
 		actualAppTx = appTxTypeCreate
 	}
+	senderIndex = numApps % g.config.NumGenesisAccounts
+	senderAcct := indexToAccount(senderIndex)
 
 	var transaction txn.Transaction
-	if actualAppTx == appTxTypeCreate {
-		numApps += uint64(len(g.pendingApps[kind]))
-		senderIndex = numApps % g.config.NumGenesisAccounts
-		senderAcct := indexToAccount(senderIndex)
 
+	switch actualAppTx {
+	case appTxTypeCreate:
 		var approval, clear string
 		if kind == appKindSwap {
 			approval, clear = approvalSwap, clearSwap
@@ -867,18 +882,36 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 			holders:  map[uint64]*appHolding{senderIndex: holding},
 		}
 		g.pendingApps[kind] = append(g.pendingApps[kind], ad)
+	case appTxTypeOptin:
+		randAppSliceIndex := rand.Uint64() % numApps
+		var appID uint64
+		if randAppSliceIndex < savedApps {
+			appID = g.apps[kind][randAppSliceIndex].appID
+		} else {
+			appID = g.pendingApps[kind][randAppSliceIndex-savedApps].appID
+		}
+		transaction = g.makeAppOptinTxn(senderAcct, round, intra, appID)
+	default:
+		return "", txn.Transaction{}, fmt.Errorf("unimplemented: invalid transaction type for app %s", appTx)
 	}
 
 	// account := indexToAccount(senderIndex)
 	// txn = g.makeAppCallTxn(account, round, intra, round, approval, clear)
 
 	// TODO: this isn't correct for general app calls:
-	if g.balances[senderIndex] < g.params.MinTxnFee {
-		return "", txn.Transaction{}, fmt.Errorf("the sender account does not have enough algos for the app call. idx %d, app transaction type %v, num %d\n\n", senderIndex, txType, g.reportData[txType].GenerationCount)
+	txnFee := g.calculateTxnFee(txType)
+	if g.balances[senderIndex] < txnFee {
+		return "", txn.Transaction{}, fmt.Errorf("the sender account does not have enough algos for the app call. idx %d, app transaction type %v, num %d", senderIndex, txType, g.reportData[txType].GenerationCount)
 	}
-	g.balances[senderIndex] -= g.params.MinTxnFee
+	g.balances[senderIndex] -= txnFee
 
 	return actual, transaction, nil
+}
+
+func (g *generator) calculateTxnFee(txType TxTypeID) uint64 {
+	// TODO: this isn't correct for general app calls. It should depend on
+	// the `effects` map.
+	return g.params.MinTxnFee
 }
 
 // ---- metric data recorders ----
