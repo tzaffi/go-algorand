@@ -27,6 +27,7 @@ import (
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/data/bookkeeping"
 	"github.com/algorand/go-algorand/data/transactions"
+	"github.com/algorand/go-algorand/data/transactions/logic"
 	"github.com/algorand/go-algorand/protocol"
 	"github.com/algorand/go-algorand/rpcs"
 	"github.com/algorand/go-algorand/test/partitiontest"
@@ -192,17 +193,57 @@ func TestAssetDestroy(t *testing.T) {
 	require.Len(t, g.assets, 0)
 }
 
+type assembledPrograms struct {
+	boxesApproval []byte
+	boxesClear    []byte
+	swapsApproval []byte
+	swapsClear    []byte
+}
+
+func assembleApps(t *testing.T) assembledPrograms {
+	t.Helper()
+
+	ap := assembledPrograms{}
+
+	ops, err := logic.AssembleString(approvalBoxes)
+	ap.boxesApproval = ops.Program
+	require.NoError(t, err)
+	ops, err = logic.AssembleString(clearBoxes)
+	ap.boxesClear = ops.Program
+	require.NoError(t, err)
+
+	ops, err = logic.AssembleString(approvalSwap)
+	ap.swapsApproval = ops.Program
+	require.NoError(t, err)
+	ops, err = logic.AssembleString(clearSwap)
+	ap.swapsClear = ops.Program
+	require.NoError(t, err)
+
+	return ap
+}
+
 func TestAppCreate(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	t.Parallel()
 
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
+	assembled := assembleApps(t)
+
+	round, intra := uint64(1337), uint64(0)
 
 	// app call transaction creating appBoxes
-	actual, txn, err := g.generateAppCallInternal(appBoxesCreate, 1, 0, 0, nil)
+	actual, txn, err := g.generateAppCallInternal(appBoxesCreate, round, intra, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCreate, actual)
 	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
+	require.Equal(t, basics.AppIndex(0), txn.ApplicationCallTxnFields.ApplicationID)
+	require.Equal(t, assembled.boxesApproval, txn.ApplicationCallTxnFields.ApprovalProgram)
+	require.Equal(t, assembled.boxesClear, txn.ApplicationCallTxnFields.ClearStateProgram)
+	require.Equal(t, uint64(32), txn.ApplicationCallTxnFields.GlobalStateSchema.NumByteSlice)
+	require.Equal(t, uint64(32), txn.ApplicationCallTxnFields.GlobalStateSchema.NumUint)
+	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumByteSlice)
+	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumUint)
+	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
 	require.Len(t, g.apps, 0)
 	require.Len(t, g.pendingApps, 1)
 	require.Len(t, g.pendingApps[appKindBoxes], 1)
@@ -212,15 +253,24 @@ func TestAppCreate(t *testing.T) {
 	ad := *g.pendingApps[appKindBoxes][0]
 	holding := *ad.holdings[0]
 	require.Equal(t, holding, *ad.holders[0])
-	require.Equal(t, uint64(1001), holding.appIndex)
+	require.Equal(t, uint64(1001+intra), holding.appIndex)
 	require.Equal(t, ad.appID, holding.appIndex)
 	require.Equal(t, appKindBoxes, ad.kind)
 
 	// app call transaction creating appSwap
-	actual, txn, err = g.generateAppCallInternal(appSwapCreate, 1, 0, 0, nil)
+	intra = 1
+	actual, txn, err = g.generateAppCallInternal(appSwapCreate, round, intra, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, appSwapCreate, actual)
 	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
+	require.Equal(t, basics.AppIndex(0), txn.ApplicationCallTxnFields.ApplicationID)
+	require.Equal(t, assembled.swapsApproval, txn.ApplicationCallTxnFields.ApprovalProgram)
+	require.Equal(t, assembled.swapsClear, txn.ApplicationCallTxnFields.ClearStateProgram)
+	require.Equal(t, uint64(32), txn.ApplicationCallTxnFields.GlobalStateSchema.NumByteSlice)
+	require.Equal(t, uint64(32), txn.ApplicationCallTxnFields.GlobalStateSchema.NumUint)
+	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumByteSlice)
+	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumUint)
+	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
 	require.Len(t, g.apps, 0)
 	require.Len(t, g.pendingApps, 2)
 	require.Len(t, g.pendingApps[appKindBoxes], 1)
@@ -230,7 +280,7 @@ func TestAppCreate(t *testing.T) {
 	ad = *g.pendingApps[appKindSwap][0]
 	holding = *ad.holdings[0]
 	require.Equal(t, holding, *ad.holders[0])
-	require.Equal(t, uint64(1001), holding.appIndex)
+	require.Equal(t, uint64(1001+intra), holding.appIndex)
 	require.Equal(t, ad.appID, holding.appIndex)
 	require.Equal(t, appKindSwap, ad.kind)
 }
@@ -240,24 +290,82 @@ func TestAppBoxesOptin(t *testing.T) {
 	t.Parallel()
 
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
+	assembled := assembleApps(t)
 
-	// app call transaction creating appBoxes
-	actual, txn, err := g.generateAppCallInternal(appBoxesOptin, 1, 0, 0, nil)
+	round, intra := uint64(1337), uint64(0)
+
+	// app call transaction opting into boxes gets replaced by creating appBoxes
+	actual, txn, err := g.generateAppCallInternal(appBoxesOptin, round, intra, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCreate, actual)
 	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
+	require.Equal(t, basics.AppIndex(0), txn.ApplicationCallTxnFields.ApplicationID)
+	require.Equal(t, assembled.boxesApproval, txn.ApplicationCallTxnFields.ApprovalProgram)
+	require.Equal(t, assembled.boxesClear, txn.ApplicationCallTxnFields.ClearStateProgram)
+	require.Equal(t, uint64(32), txn.ApplicationCallTxnFields.GlobalStateSchema.NumByteSlice)
+	require.Equal(t, uint64(32), txn.ApplicationCallTxnFields.GlobalStateSchema.NumUint)
+	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumByteSlice)
+	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumUint)
+	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
 	require.Len(t, g.apps, 0)
 	require.Len(t, g.pendingApps, 1)
-	require.Len(t, g.pendingApps[appKindBoxes], 1)
-	require.Len(t, g.pendingApps[appKindSwap], 0)
 	require.Len(t, g.pendingApps[appKindBoxes][0].holdings, 1)
 	require.Len(t, g.pendingApps[appKindBoxes][0].holders, 1)
 	ad := *g.pendingApps[appKindBoxes][0]
 	holding := *ad.holdings[0]
 	require.Equal(t, holding, *ad.holders[0])
-	require.Equal(t, uint64(1001), holding.appIndex)
+	require.Equal(t, uint64(1001+intra), holding.appIndex)
 	require.Equal(t, ad.appID, holding.appIndex)
 	require.Equal(t, appKindBoxes, ad.kind)
+
+	require.NotContains(t, effects, actual)
+
+	// 2nd attempt to optin doesn't get replaced
+	intra += 1
+
+	actual, txn, err = g.generateAppCallInternal(appBoxesOptin, round, intra, 0, nil)
+	require.NoError(t, err)
+	require.Equal(t, appBoxesOptin, actual)
+	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
+	require.Equal(t, basics.AppIndex(1001), txn.ApplicationCallTxnFields.ApplicationID)
+	require.Equal(t, []byte(nil), txn.ApplicationCallTxnFields.ApprovalProgram)
+	require.Equal(t, []byte(nil), txn.ApplicationCallTxnFields.ClearStateProgram)
+	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.GlobalStateSchema)
+	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.LocalStateSchema)
+	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
+	require.Len(t, g.apps, 0)
+	require.Len(t, g.pendingApps, 1)
+	require.Len(t, g.pendingApps[appKindBoxes], 1)
+	require.Len(t, g.pendingApps[appKindSwap], 0)
+	// apps and pendingApps aren't updated so neither are the holdings
+
+	require.Contains(t, effects, actual)
+	require.Len(t, effects[actual], 2)
+	require.Equal(t, TxEffect{effectPaymentTxSibling, 1}, effects[actual][0])
+	require.Equal(t, TxEffect{effectInnerTx, 2}, effects[actual][1])
+
+	numTxns, err := g.recordIncludingEffects(actual, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), numTxns)
+
+	// 2nd attempt to optin doesn't get replaced
+	intra += numTxns
+
+	actual, txn, err = g.generateAppCallInternal(appBoxesOptin, round, intra, 0, nil)
+	require.NoError(t, err)
+	require.Equal(t, appBoxesOptin, actual)
+	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
+	require.Equal(t, basics.AppIndex(1001), txn.ApplicationCallTxnFields.ApplicationID)
+	require.Equal(t, []byte(nil), txn.ApplicationCallTxnFields.ApprovalProgram)
+	require.Equal(t, []byte(nil), txn.ApplicationCallTxnFields.ClearStateProgram)
+	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.GlobalStateSchema)
+	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.LocalStateSchema)
+	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
+	require.Len(t, g.apps, 0)
+	require.Len(t, g.pendingApps, 1)
+	require.Len(t, g.pendingApps[appKindBoxes], 1)
+	require.Len(t, g.pendingApps[appKindSwap], 0)
+	// apps / pendingApps / effects / numTxns tautologically identical
 }
 
 // func TestAppTxRecord(t *testing.T) {

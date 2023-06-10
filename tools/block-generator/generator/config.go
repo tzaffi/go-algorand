@@ -92,6 +92,18 @@ const (
 	appKindBoxes
 )
 
+func (a appKind) String() string {
+	switch a {
+	case appKindSwap:
+		return "swap"
+	case appKindBoxes:
+		return "boxes"
+	default:
+		// Return a default value for unknown kinds.
+		return "Unknown"
+	}
+}
+
 type appTxType uint8
 
 const (
@@ -107,19 +119,19 @@ const (
 func (a appTxType) String() string {
 	switch a {
 	case appTxTypeCreate:
-		return "Create"
+		return "create"
 	case appTxTypeUpdate:
-		return "Update"
+		return "update"
 	case appTxTypeDelete:
-		return "Delete"
+		return "delete"
 	case appTxTypeOptin:
-		return "Optin"
+		return "optin"
 	case appTxTypeCall:
-		return "Call"
+		return "call"
 	case appTxTypeClose:
-		return "Close"
+		return "close"
 	case appTxTypeClear:
-		return "Clear"
+		return "clear"
 	default:
 		// Return a default value for unknown types.
 		return "Unknown"
@@ -172,6 +184,10 @@ func parseAppTxType(txType TxTypeID) (isApp bool, kind appKind, tx appTxType, er
 	}
 
 	return
+}
+
+func getAppTxType(kind appKind, a appTxType) TxTypeID {
+	return TxTypeID(fmt.Sprintf("app_%s_%s", kind, a))
 }
 
 // GenerationConfig defines the tunable parameters for block generation.

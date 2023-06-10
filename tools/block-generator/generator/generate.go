@@ -66,9 +66,11 @@ var clearSwap string
 var effects map[TxTypeID][]TxEffect
 
 func init() {
-	effects = make(map[TxTypeID][]TxEffect)
-	effects[appBoxesOptin] = []TxEffect{
-		{effectPaymentTxSibling, 1}, {effectInnerTx, 2},
+	effects = map[TxTypeID][]TxEffect{
+		appBoxesOptin: {
+			{effectPaymentTxSibling, 1},
+			{effectInnerTx, 2},
+		},
 	}
 }
 
@@ -809,18 +811,19 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) (txn.SignedTxn, t
 		return txn.SignedTxn{}, txn.ApplyData{}, intra, fmt.Errorf("unexpected error received from generateAppCallInternal(): %w", err)
 	}
 	if transaction.Type == "" {
+		// should this be a panic?
 		return txn.SignedTxn{}, txn.ApplyData{}, intra, fmt.Errorf("missing transaction type for app transaction")
 	}
 
-	if _, ok := effects[actual]; !ok {
-		g.recordData(actual, start)
-		intra++
-	} else {
+	if _, ok := effects[actual]; ok {
 		txCount, err := g.recordIncludingEffects(actual, start)
 		intra += txCount
 		if err != nil {
 			return txn.SignedTxn{}, txn.ApplyData{}, intra, fmt.Errorf("failed to record app transaction %s: %w", actual, err)
 		}
+	} else {
+		g.recordData(actual, start)
+		intra++
 	}
 
 	return signTxn(transaction), txn.ApplyData{}, intra, nil
@@ -829,7 +832,7 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) (txn.SignedTxn, t
 func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintIndex uint64, hintApp *appData) (TxTypeID, txn.Transaction, error) {
 	actual := txType
 
-	isApp, kind, appTx, err := parseAppTxType(txType)
+	isApp, kind, appCallType, err := parseAppTxType(txType)
 	if err != nil {
 		return "", txn.Transaction{}, err
 	}
@@ -837,8 +840,8 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 		return "", txn.Transaction{}, fmt.Errorf("should be an app but not parsed that way: %v", txType)
 	}
 
-	if appTx != appTxTypeCreate && appTx != appTxTypeOptin {
-		return "", txn.Transaction{}, fmt.Errorf("unimplemented: invalid transaction type for app %s", appTx)
+	if appCallType != appTxTypeCreate && appCallType != appTxTypeOptin {
+		return "", txn.Transaction{}, fmt.Errorf("unimplemented transaction type for app %s from %s", appCallType, txType)
 	}
 
 	var senderIndex uint64
@@ -848,20 +851,21 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 		senderIndex = rand.Uint64() % g.numAccounts
 	}
 
-	actualAppTx := appTx
+	actualAppCall := appCallType
 
-	savedApps := uint64(len(g.apps[kind]))
-	pendingApps := uint64(len(g.pendingApps[kind]))
-	numApps := savedApps + pendingApps
-	if numApps == 0 {
-		actualAppTx = appTxTypeCreate
+	savedAppsForKind := uint64(len(g.apps[kind]))
+	pendingAppsForKind := uint64(len(g.pendingApps[kind]))
+	numAppsForKind := savedAppsForKind + pendingAppsForKind
+	if numAppsForKind == 0 {
+		actualAppCall = appTxTypeCreate
+		actual = getAppTxType(kind, actualAppCall)
 	}
-	senderIndex = numApps % g.config.NumGenesisAccounts
+	senderIndex = numAppsForKind % g.config.NumGenesisAccounts
 	senderAcct := indexToAccount(senderIndex)
 
 	var transaction txn.Transaction
 
-	switch actualAppTx {
+	switch actualAppCall {
 	case appTxTypeCreate:
 		var approval, clear string
 		if kind == appKindSwap {
@@ -883,16 +887,16 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 		}
 		g.pendingApps[kind] = append(g.pendingApps[kind], ad)
 	case appTxTypeOptin:
-		randAppSliceIndex := rand.Uint64() % numApps
+		randAppSliceIndex := rand.Uint64() % numAppsForKind
 		var appID uint64
-		if randAppSliceIndex < savedApps {
+		if randAppSliceIndex < savedAppsForKind {
 			appID = g.apps[kind][randAppSliceIndex].appID
 		} else {
-			appID = g.pendingApps[kind][randAppSliceIndex-savedApps].appID
+			appID = g.pendingApps[kind][randAppSliceIndex-savedAppsForKind].appID
 		}
 		transaction = g.makeAppOptinTxn(senderAcct, round, intra, appID)
 	default:
-		return "", txn.Transaction{}, fmt.Errorf("unimplemented: invalid transaction type for app %s", appTx)
+		return "", txn.Transaction{}, fmt.Errorf("unimplemented: invalid transaction type for app %s", appCallType)
 	}
 
 	// account := indexToAccount(senderIndex)
@@ -956,6 +960,7 @@ func (g *generator) txnForRound(round uint64) uint64 {
 
 // finishRound tells the generator it can apply any pending state.
 func (g *generator) finishRound(txnCount uint64) {
+	// should we update txnCounter as we go along instead of at each round?
 	g.txnCounter += txnCount
 
 	g.timestamp += consensusTimeMilli
