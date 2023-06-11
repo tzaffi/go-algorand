@@ -19,6 +19,7 @@ package generator
 import (
 	"encoding/binary"
 
+	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/data/basics"
 	txn "github.com/algorand/go-algorand/data/transactions"
 	"github.com/algorand/go-algorand/data/txntest"
@@ -160,7 +161,7 @@ func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra uint64, 
 	optInTxn.ApplicationID = basics.AppIndex(appIndex)
 	optInTxn.OnCompletion = txn.OptInOC
 	optInTxn.Boxes = []txn.BoxRef{
-		{Name: []byte(sender.String())},
+		{Name: crypto.Digest(sender).ToSlice()},
 	}
 
 	// TODO: these may not make sense for the swap optin

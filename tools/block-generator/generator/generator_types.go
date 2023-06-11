@@ -78,11 +78,13 @@ type generator struct {
 	// being created.
 	pendingAssets []*assetData
 
-	// apps is a minimal representation of the app holdings
-	apps map[appKind][]*appData
-	// pendingApps is used to hold newly created apps so that they are not used before
-	// being created.
-	pendingApps map[appKind][]*appData
+	appMap map[appKind]map[uint64]*appData
+	// appSlice is a minimal representation of the app information for the generator
+	appSlice map[appKind][]*appData
+
+	// // pendingApps is used to hold newly created apps so that they are not used before
+	// // being created.
+	// pendingApps map[appKind][]*appData
 
 	transactionWeights []float32
 
@@ -115,11 +117,7 @@ type appData struct {
 	appID   uint64
 	creator uint64
 	kind    appKind
-	// Holding at index 0 is the creator.
-	holdings []*appHolding
-	// Set of holders in the holdings array for easy reference.
-	holders map[uint64]*appHolding
-	// TODO: more data, not sure yet exactly what
+	optins  map[uint64]bool
 }
 
 type assetHolding struct {
