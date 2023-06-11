@@ -125,16 +125,6 @@ func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64,
 
 	createTxn := g.makeTestTxn(sender, round, intra)
 
-	/* all 0 values but keep around for reference
-	createTxn.ApplicationID = 0
-	createTxn.ApplicationArgs = nil
-	createTxn.Accounts = nil
-	createTxn.ForeignApps = nil
-	createTxn.ForeignAssets = nil
-	createTxn.Boxes = nil
-	createTxn.ExtraProgramPages = 0
-	*/
-
 	createTxn.Type = protocol.ApplicationCallTx
 	createTxn.ApprovalProgram = approval
 	createTxn.ClearStateProgram = clear
@@ -157,10 +147,21 @@ func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64,
 }
 
 func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra uint64, appIndex uint64) []txn.SignedTxn {
+	/* all 0 values but keep around for reference
+	createTxn.ApplicationArgs = nil
+	createTxn.Accounts = nil
+	createTxn.ForeignApps = nil
+	createTxn.ForeignAssets = nil
+	createTxn.ExtraProgramPages = 0
+	*/
+
 	optInTxn := g.makeTestTxn(sender, round, intra)
 	optInTxn.Type = protocol.ApplicationCallTx
 	optInTxn.ApplicationID = basics.AppIndex(appIndex)
 	optInTxn.OnCompletion = txn.OptInOC
+	optInTxn.Boxes = []txn.BoxRef{
+		{Name: []byte(sender.String())},
+	}
 
 	// TODO: these may not make sense for the swap optin
 	paySibTxn := g.makeTestTxn(sender, round, intra)

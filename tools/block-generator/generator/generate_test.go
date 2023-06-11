@@ -319,6 +319,8 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumByteSlice)
 	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumUint)
 	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
+	require.Nil(t, txn.ApplicationCallTxnFields.Boxes)
+
 	require.Len(t, g.apps, 0)
 	require.Len(t, g.pendingApps, 1)
 	require.Len(t, g.pendingApps[appKindBoxes][0].holdings, 1)
@@ -352,6 +354,9 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.GlobalStateSchema)
 	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.LocalStateSchema)
 	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
+	require.Len(t, txn.ApplicationCallTxnFields.Boxes, 1)
+	require.Equal(t, []byte(pay.Sender.String()), txn.ApplicationCallTxnFields.Boxes[0].Name)
+
 	require.Len(t, g.apps, 0)
 	require.Len(t, g.pendingApps, 1)
 	require.Len(t, g.pendingApps[appKindBoxes], 1)
@@ -388,74 +393,15 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.GlobalStateSchema)
 	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.LocalStateSchema)
 	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
+	require.Len(t, txn.ApplicationCallTxnFields.Boxes, 1)
+	require.Equal(t, []byte(pay.Sender.String()), txn.ApplicationCallTxnFields.Boxes[0].Name)
+
 	require.Len(t, g.apps, 0)
 	require.Len(t, g.pendingApps, 1)
 	require.Len(t, g.pendingApps[appKindBoxes], 1)
 	require.Len(t, g.pendingApps[appKindSwap], 0)
 	// apps / pendingApps / effects / numTxns tautologically identical
 }
-
-// func TestAppTxRecord(t *testing.T) {
-// 	partitiontest.PartitionTest(t)
-// 	t.Parallel()
-
-// 	var (
-// 		oneBoxCreate  = map[TxTypeID]uint64{appBoxesCreate: 1}
-// 		oneSwapCreate = map[TxTypeID]uint64{appSwapCreate: 1}
-// 		oneBoxOptin   = map[TxTypeID]uint64{
-// 			appBoxesOptin:          1,
-// 			effectPaymentTxSibling: 1,
-// 			effectInnerTx:          1,
-// 		}
-// 	)
-
-// 	var testcases = []struct {
-// 		name   string
-// 		txType TxTypeID
-// 		deltas map[TxTypeID]uint64
-// 		err    error
-// 	}{
-// 		{
-// 			name:   "app swap create 1",
-// 			txType: appSwapCreate,
-// 			deltas: oneSwapCreate,
-// 		},
-// 		{
-// 			name:   "app boxes create 1",
-// 			txType: appBoxesCreate,
-// 			deltas: oneBoxCreate,
-// 		},
-// 		{
-// 			name:   "app boxes optin 1",
-// 			txType: appBoxesOptin,
-// 			deltas: oneBoxOptin,
-// 		},
-// 	}
-
-// 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
-// 	shadowReporter := make(map[TxTypeID]uint64)
-
-// 	assertEqualReporters := func() {
-// 		require.Len(t, g.reportData, len(shadowReporter))
-// 		for k, v := range shadowReporter {
-// 			require.Contains(t, k, g.reportData)
-// 			require.Equal(t, v, g.reportData[k])
-// 		}
-// 	}
-
-// 	for _, tc := range testcases {
-// 		tc := tc
-// 		t.Run(tc.name, func(t *testing.T) {
-// 			var intra uint64 = 0
-// 			actual, txn, err := g.generateAppTxn(1337, intra)
-// 			require.NoError(t, err)
-// 			require.Equal(t, )
-// 			require.Equal(t, protocol.ApplicationCallTx, txn.Type)
-// 			require.Equal(t, tc.deltas, g.txRecord)
-// 		})
-// 	}
-
-// }
 
 func TestWriteRoundZero(t *testing.T) {
 	partitiontest.PartitionTest(t)

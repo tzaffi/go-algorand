@@ -379,7 +379,7 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 			var signedTxns []txn.SignedTxn
 			var ads []txn.ApplyData
 			var err error
-			signedTxns, ads, intra, err = g.generateSignedGroup(g.round, intra)
+			signedTxns, ads, intra, err = g.generateSignedTxns(g.round, intra)
 			if err != nil {
 				// return err
 				panic(fmt.Sprintf("failed to generate transaction: %v\n", err))
@@ -559,7 +559,7 @@ func getAppTxOptions() []interface{} {
 
 // ---- Transaction Generation (Pay/Asset/Apps) ----
 
-func (g *generator) generateSignedGroup(round uint64, intra uint64) ([]txn.SignedTxn, []txn.ApplyData, uint64 /* nextIntra */, error) {
+func (g *generator) generateSignedTxns(round uint64, intra uint64) ([]txn.SignedTxn, []txn.ApplyData, uint64 /* nextIntra */, error) {
 	selection, err := weightedSelection(g.transactionWeights, getTransactionOptions(), paymentTx)
 	if err != nil {
 		return nil, nil, intra, err
@@ -837,7 +837,12 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn,
 		intra++
 	}
 
-	return signedTxns, []txn.ApplyData{txn.ApplyData{}}, intra, nil
+	ads := make([]txn.ApplyData, len(signedTxns))
+	for i := range signedTxns {
+		ads[i] = txn.ApplyData{}
+	}
+
+	return signedTxns, ads, intra, nil
 }
 
 func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintIndex uint64, hintApp *appData) (TxTypeID, []txn.SignedTxn, error) {

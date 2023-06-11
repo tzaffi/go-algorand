@@ -25,7 +25,14 @@ cleanup: clean-reports
 enter-pg:
 	docker exec -it generator-test-container psql -U algorand -d generator_db
 
-run-runner:
+clean:
+	rm block-generator
+
+block-generator: clean
+	go build
+
+
+run-runner: block-generator
 	./block-generator runner --conduit-binary ./conduit \
 	--log-level trace \
 	--keep-data-dir \
