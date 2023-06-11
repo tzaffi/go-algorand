@@ -78,8 +78,12 @@ type generator struct {
 	// being created.
 	pendingAssets []*assetData
 
+	// appMap provides a mapping from appID to appData for each appKind
 	appMap map[appKind]map[uint64]*appData
-	// appSlice is a minimal representation of the app information for the generator
+
+	// appSlice provides a slice of appData for each appKind. The reason
+	// for maintaining both appMap and appSlice is to enable
+	// random selection of apps to interact with.
 	appSlice map[appKind][]*appData
 
 	// // pendingApps is used to hold newly created apps so that they are not used before
@@ -123,11 +127,6 @@ type appData struct {
 type assetHolding struct {
 	acctIndex uint64
 	balance   uint64
-}
-
-type appHolding struct {
-	appIndex uint64
-	// TODO: more data, not sure yet exactly what
 }
 
 // Report is the generation report.

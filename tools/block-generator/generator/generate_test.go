@@ -251,11 +251,16 @@ func TestAppCreate(t *testing.T) {
 	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumByteSlice)
 	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumUint)
 	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
-	require.Len(t, g.appSlice, 0)
-	require.Len(t, g.pendingApps, 1)
-	require.Len(t, g.pendingApps[appKindBoxes], 1)
-	require.Len(t, g.pendingApps[appKindSwap], 0)
-	optins := g.pendingApps[appKindBoxes][0].optins
+
+	require.Len(t, g.appSlice[appKindBoxes], 1)
+	require.Len(t, g.appSlice[appKindSwap], 0)
+	require.Len(t, g.appMap[appKindBoxes], 1)
+	require.Len(t, g.appMap[appKindSwap], 0)
+	ad := g.appSlice[appKindBoxes][0]
+	require.Equal(t, ad, g.appMap[appKindBoxes][ad.appID])
+	require.Equal(t, hint.creator, ad.creator)
+	require.Equal(t, appKindBoxes, ad.kind)
+	optins := ad.optins
 	require.Len(t, optins, 1)
 	require.Contains(t, optins, hint.creator)
 
@@ -278,12 +283,16 @@ func TestAppCreate(t *testing.T) {
 	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumByteSlice)
 	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumUint)
 	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
-	require.Len(t, g.appSlice, 0)
-	require.Len(t, g.pendingApps, 2)
-	require.Len(t, g.pendingApps[appKindBoxes], 1)
-	require.Len(t, g.pendingApps[appKindSwap], 1)
 
-	optins = g.pendingApps[appKindSwap][0].optins
+	require.Len(t, g.appSlice[appKindBoxes], 1)
+	require.Len(t, g.appSlice[appKindSwap], 1)
+	require.Len(t, g.appMap[appKindBoxes], 1)
+	require.Len(t, g.appMap[appKindSwap], 1)
+	ad = g.appSlice[appKindSwap][0]
+	require.Equal(t, ad, g.appMap[appKindSwap][ad.appID])
+	require.Equal(t, hint.creator, ad.creator)
+	require.Equal(t, appKindSwap, ad.kind)
+	optins = ad.optins
 	require.Len(t, optins, 1)
 	require.Contains(t, optins, hint.creator)
 }
@@ -319,19 +328,23 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
 	require.Nil(t, txn.ApplicationCallTxnFields.Boxes)
 
-	require.Len(t, g.appSlice, 0)
-	require.Len(t, g.pendingApps, 1)
-
-	require.Len(t, g.pendingApps[appKindBoxes], 1)
-	require.Len(t, g.pendingApps[appKindSwap], 0)
-	optins := g.pendingApps[appKindBoxes][0].optins
+	require.Len(t, g.appSlice[appKindBoxes], 1)
+	require.Len(t, g.appSlice[appKindSwap], 0)
+	require.Len(t, g.appMap[appKindBoxes], 1)
+	require.Len(t, g.appMap[appKindSwap], 0)
+	ad := g.appSlice[appKindBoxes][0]
+	require.Equal(t, ad, g.appMap[appKindBoxes][ad.appID])
+	require.Equal(t, hint.creator, ad.creator)
+	require.Equal(t, appKindBoxes, ad.kind)
+	optins := ad.optins
 	require.Len(t, optins, 1)
 	require.Contains(t, optins, hint.creator)
 
 	require.NotContains(t, effects, actual)
 
-	// 2nd attempt to optin doesn't get replaced
+	// 2nd attempt to optin (with new sender) doesn't get replaced
 	intra += 1
+	hint.creator = 8
 
 	actual, sgnTxns, err = g.generateAppCallInternal(appBoxesOptin, round, intra, 0, &hint)
 	require.NoError(t, err)
@@ -354,16 +367,17 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Len(t, txn.ApplicationCallTxnFields.Boxes, 1)
 	require.Equal(t, crypto.Digest(pay.Sender).ToSlice(), txn.ApplicationCallTxnFields.Boxes[0].Name)
 
-	require.Len(t, g.appSlice, 0)
-	require.Len(t, g.pendingApps, 1)
-	require.Len(t, g.pendingApps[appKindBoxes], 1)
-	require.Len(t, g.pendingApps[appKindSwap], 0)
-
-	optins = g.pendingApps[appKindBoxes][0].optins
-	require.Len(t, optins, 1)
+	require.Len(t, g.appSlice[appKindBoxes], 1)
+	require.Len(t, g.appSlice[appKindSwap], 0)
+	require.Len(t, g.appMap[appKindBoxes], 1)
+	require.Len(t, g.appMap[appKindSwap], 0)
+	ad = g.appSlice[appKindBoxes][0]
+	require.Equal(t, ad, g.appMap[appKindBoxes][ad.appID])
+	require.Equal(t, uint64(7), ad.creator) // NOT 8!!!
+	require.Equal(t, appKindBoxes, ad.kind)
+	optins = ad.optins
+	require.Len(t, optins, 2)
 	require.Contains(t, optins, hint.creator)
-
-	// apps and pendingApps aren't updated so neither are the holdings
 
 	require.Contains(t, effects, actual)
 	require.Len(t, effects[actual], 2)
@@ -395,10 +409,20 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Len(t, txn.ApplicationCallTxnFields.Boxes, 1)
 	require.Equal(t, crypto.Digest(pay.Sender).ToSlice(), txn.ApplicationCallTxnFields.Boxes[0].Name)
 
-	require.Len(t, g.appSlice, 0)
-	require.Len(t, g.pendingApps, 1)
-	require.Len(t, g.pendingApps[appKindBoxes], 1)
-	require.Len(t, g.pendingApps[appKindSwap], 0)
+	// no change to app states
+	require.Len(t, g.appSlice[appKindBoxes], 1)
+	require.Len(t, g.appSlice[appKindSwap], 0)
+	require.Len(t, g.appMap[appKindBoxes], 1)
+	require.Len(t, g.appMap[appKindSwap], 0)
+	ad = g.appSlice[appKindBoxes][0]
+	require.Equal(t, ad, g.appMap[appKindBoxes][ad.appID])
+	require.Equal(t, uint64(7), ad.creator) // NOT 8!!!
+	require.Equal(t, appKindBoxes, ad.kind)
+	optins = ad.optins
+	require.Len(t, optins, 2)
+	require.Contains(t, optins, hint.creator)
+
+	require.NotContains(t, effects, actual)
 }
 
 func TestWriteRoundZero(t *testing.T) {

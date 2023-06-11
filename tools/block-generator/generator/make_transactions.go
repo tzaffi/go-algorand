@@ -147,7 +147,7 @@ func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64,
 	return createTxn.Txn()
 }
 
-func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra uint64, appIndex uint64) []txn.SignedTxn {
+func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra, appIndex uint64) []txn.SignedTxn {
 	/* all 0 values but keep around for reference
 	createTxn.ApplicationArgs = nil
 	createTxn.Accounts = nil
@@ -172,4 +172,16 @@ func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra uint64, 
 	paySibTxn.Amount = uint64(2000)
 
 	return txntest.Group(&optInTxn, &paySibTxn)
+}
+
+func (g *generator) makeAppCallTxn(sender basics.Address, round, intra, appIndex uint64) txn.Transaction {
+	callTxn := g.makeTestTxn(sender, round, intra)
+	callTxn.Type = protocol.ApplicationCallTx
+	callTxn.ApplicationID = basics.AppIndex(appIndex)
+	callTxn.OnCompletion = txn.NoOpOC // redundant for clarity
+	callTxn.Boxes = []txn.BoxRef{
+		{Name: crypto.Digest(sender).ToSlice()},
+	}
+
+	return callTxn.Txn()
 }

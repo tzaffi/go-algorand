@@ -853,11 +853,6 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn,
 }
 
 func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintIndex uint64, hintApp *appData) (TxTypeID, []txn.SignedTxn, error) {
-	actual, kind, appCallType, _, numAppsForKind, err := g.validateWithCreateReassign(txType)
-	if err != nil {
-		return "", nil, err
-	}
-
 	var senderIndex uint64
 	if hintApp != nil {
 		senderIndex = hintApp.creator
@@ -866,22 +861,19 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 	}
 	senderAcct := indexToAccount(senderIndex)
 
-	var randAppSliceIndex uint64
-	var appID uint64
-	if appCallType != appTxTypeCreate {
-		randAppSliceIndex = rand.Uint64() % numAppsForKind
-		appID = g.appSlice[kind][randAppSliceIndex].appID
-
-		actual, kind, appCallType, err = g.reassignAfterCreated(senderIndex, appID, actual, kind, appCallType)
-		if err != nil {
-			return "", nil, err
-		}
+	actual, kind, appCallType, appID, err := g.getActualAppCall(txType, senderIndex)
+	if err != nil {
+		return "", nil, err
 	}
+	if hintApp != nil && hintApp.appID != 0 {
+		// can only override the appID when non-zero
+		appID = hintApp.appID
+	}
+	// WLOG: the matched cases below are now well-defined thanks to getActualAppCall()
 
 	var signedTxns []txn.SignedTxn
 	switch appCallType {
 	case appTxTypeCreate:
-		// this should always succeed
 		var approval, clear string
 		if kind == appKindSwap {
 			approval, clear = approvalSwap, clearSwap
@@ -894,6 +886,12 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 		}
 
 		appID := g.txnCounter + intra + 1
+		for k := range g.appMap {
+			if g.appMap[k][appID] != nil {
+				return "", nil, fmt.Errorf("should never happen! app %d already exists for kind %s", appID, k)
+			}
+		}
+
 		ad := &appData{
 			appID:   appID,
 			creator: senderIndex,
@@ -905,15 +903,17 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 		g.appMap[kind][appID] = ad
 
 	case appTxTypeOptin:
-		// WLOG app already exists thx to validateWithCreateReassign()
-		// WLOG not opted in thx to reassignAfterCreated()
 		signedTxns = g.makeAppOptinTxn(senderAcct, round, intra, appID)
-	default:
-		return "", nil, fmt.Errorf("unimplemented: invalid transaction type for app %s", appCallType)
-	}
+		g.appMap[kind][appID].optins[senderIndex] = true
 
-	// account := indexToAccount(senderIndex)
-	// txn = g.makeAppCallTxn(account, round, intra, round, approval, clear)
+	case appTxTypeCall:
+		signedTxns = []txn.SignedTxn{
+			signTxn(g.makeAppCallTxn(senderAcct, round, intra, appID)),
+		}
+
+	default:
+		return "", nil, fmt.Errorf("unimplemented: invalid transaction type <%s> for app %d", appCallType, appID)
+	}
 
 	// TODO: this fee calculation isn't correct for most app calls:
 	txnFee := g.calculateTxnFee(txType)
@@ -925,64 +925,66 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 	return actual, signedTxns, nil
 }
 
-func (g *generator) validateWithCreateReassign(txType TxTypeID) (TxTypeID, appKind, appTxType, uint64, uint64, error) {
+func (g *generator) getAppData(kind appKind, senderIndex, appID uint64) (*appData, bool /* appExists */, bool /* optedIn */) {
+	ad, ok := g.appMap[kind][appID]
+	if !ok {
+		return nil, false, false
+	}
+	if !ad.optins[senderIndex] {
+		return nil, true, false
+	}
+	return ad, true, true
+}
+
+// getActualAppCall returns the actual transaction type, app kind, app transaction type and appID
+// * it keeps the txType if there aren't any problems (for example create always is kept)
+// * it creates the app if the app of the given kind doesn't exist
+// * it switches to noopoc instead of optin when already opted in
+// * it switches to optin when noopoc if not opted in
+// * the appID is 0 for creates, and otherwise a randome appID from the existing apps for the kind
+func (g *generator) getActualAppCall(txType TxTypeID, senderIndex uint64) (TxTypeID, appKind, appTxType, uint64 /* appID */, error) {
 	isApp, kind, appCallType, err := parseAppTxType(txType)
 	if err != nil {
-		return "", 0, 0, 0, 0, err
+		return "", 0, 0, 0, err
 	}
 	if !isApp {
-		return "", 0, 0, 0, 0, fmt.Errorf("should be an app but not parsed that way: %v", txType)
+		return "", 0, 0, 0, fmt.Errorf("should be an app but not parsed that way: %v", txType)
 	}
-	switch appCallType {
-	case appTxTypeUpdate, appTxTypeDelete, appTxTypeClose, appTxTypeClear:
-		return "", 0, 0, 0, 0, fmt.Errorf("unimplemented transaction type for app %s from %s", appCallType, txType)
+
+	// creates get a quick pass:
+	if appCallType == appTxTypeCreate {
+		return txType, kind, appTxTypeCreate, 0, nil
 	}
 
 	numAppsForKind := uint64(len(g.appSlice[kind]))
-
 	if numAppsForKind == 0 {
 		// can't do anything else with the app if it doesn't exist, so must create it first!!!
-		return getAppTxType(kind, appTxTypeCreate), kind, appTxTypeCreate, 0, numAppsForKind, nil
+		return getAppTxType(kind, appTxTypeCreate), kind, appTxTypeCreate, 0, nil
 	}
 
-	return txType, kind, appCallType, 0, numAppsForKind, nil
-}
+	// anything else requires an appID
+	rndIdx := rand.Uint64() % numAppsForKind
+	appID := g.appSlice[kind][rndIdx].appID
 
-func (g *generator) optedInToApp(senderIndex, appID uint64, kind appKind) (bool, error) {
-	ad, ok := g.appMap[kind][appID]
-	if !ok {
-		return false, fmt.Errorf("app %d of kind %s does not exist", appID, kind)
-	}
-	if !ad.optins[senderIndex] {
-		return false, nil
-	}
-	return true, nil
-}
-
-// reassignAfterCreated returns the actual transaction type, app kind, and app transaction type
-// * it errors for creates
-// * it keeps the txType of there aren't any problems
-// * it calls the app via noopoc instead of opting in if it's already opted in
-// * it opts in if it's not opted in when attempting to call noop
-func (g *generator) reassignAfterCreated(senderIndex, appID uint64, txType TxTypeID, kind appKind, appCallType appTxType) (TxTypeID, appKind, appTxType, error) {
-	ad, ok := g.appMap[kind][appID]
-	if !ok {
-		return txType, kind, appCallType, fmt.Errorf("app %d of kind %s does not exist", appID, kind)
+	_, exists, optedIn := g.getAppData(kind, senderIndex, appID)
+	if !exists {
+		return txType, kind, appCallType, appID, fmt.Errorf("should never happen! app %d of kind %s does not exist", appID, kind)
 	}
 
 	switch appCallType {
-	case appTxTypeCreate:
-		return txType, kind, appCallType, fmt.Errorf("shouldn't be here if app is being created")
 	case appTxTypeOptin:
-		if _, ok := ad.optins[senderIndex]; ok {
-			return getAppTxType(kind, appTxTypeCall), kind, appTxTypeCall, nil
+		if optedIn {
+			return getAppTxType(kind, appTxTypeCall), kind, appTxTypeCall, appID, nil
 		}
 	case appTxTypeCall:
-		if _, ok := ad.optins[senderIndex]; !ok {
-			return getAppTxType(kind, appTxTypeOptin), kind, appTxTypeOptin, nil
+		if !optedIn {
+			return getAppTxType(kind, appTxTypeOptin), kind, appTxTypeOptin, appID, nil
 		}
+	default: // appTxTypeCreate, appTxTypeUpdate, appTxTypeDelete, appTxTypeClose, appTxTypeClear:
+		return "", 0, 0, 0, fmt.Errorf("unimplemented transaction type for app %s from %s", appCallType, txType)
 	}
-	return txType, kind, appCallType, nil
+
+	return txType, kind, appCallType, appID, nil
 }
 
 func (g *generator) calculateTxnFee(txType TxTypeID) uint64 {
