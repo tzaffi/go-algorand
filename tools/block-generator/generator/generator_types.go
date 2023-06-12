@@ -49,7 +49,8 @@ type generator struct {
 	numAccounts uint64
 
 	// Block stuff
-	round         uint64
+	round uint64
+	// currentAppID  uint64
 	txnCounter    uint64
 	prevBlockHash string
 	timestamp     int64
@@ -78,12 +79,17 @@ type generator struct {
 	// being created.
 	pendingAssets []*assetData
 
-	// appMap provides a mapping from appID to appData for each appKind
-	appMap map[appKind]map[uint64]*appData
+	// pendingAppMap provides a live mapping from appID to appData for each appKind
+	pendingAppMap map[appKind]map[uint64]*appData
 
-	// appSlice provides a slice of appData for each appKind. The reason
-	// for maintaining both appMap and appSlice is to enable
+	// pendingAppSlice provides a live slice of appData for each appKind. The reason
+	// for maintaining both appMap and pendingAppSlice is to enable
 	// random selection of apps to interact with.
+	pendingAppSlice map[appKind][]*appData
+
+	// appMap and appSlice store the information from their corresponding pending*
+	// data structures at the end of each round
+	appMap   map[appKind]map[uint64]*appData
 	appSlice map[appKind][]*appData
 
 	// // pendingApps is used to hold newly created apps so that they are not used before

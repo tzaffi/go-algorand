@@ -130,8 +130,10 @@ func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64,
 	createTxn.ApprovalProgram = approval
 	createTxn.ClearStateProgram = clear
 
+	/*** NOPE
 	// sender opts-in to their own created app
 	createTxn.OnCompletion = txn.OptInOC
+	***/
 
 	// max out local/global state usage but split
 	// 50% between bytes/uint64
@@ -147,6 +149,7 @@ func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64,
 	return createTxn.Txn()
 }
 
+// makeAppOptinTxn currently only works for the boxes app
 func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra, appIndex uint64) []txn.SignedTxn {
 	/* all 0 values but keep around for reference
 	createTxn.ApplicationArgs = nil
@@ -174,11 +177,16 @@ func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra, appInde
 	return txntest.Group(&optInTxn, &paySibTxn)
 }
 
+// makeAppCallTxn currently only works for the boxes app
 func (g *generator) makeAppCallTxn(sender basics.Address, round, intra, appIndex uint64) txn.Transaction {
 	callTxn := g.makeTestTxn(sender, round, intra)
 	callTxn.Type = protocol.ApplicationCallTx
 	callTxn.ApplicationID = basics.AppIndex(appIndex)
 	callTxn.OnCompletion = txn.NoOpOC // redundant for clarity
+	callTxn.ApplicationArgs = [][]byte{
+		{0xe1, 0xf9, 0x3f, 0x1d}, // the method selector for getting a box
+	}
+
 	callTxn.Boxes = []txn.BoxRef{
 		{Name: crypto.Digest(sender).ToSlice()},
 	}

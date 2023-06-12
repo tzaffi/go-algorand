@@ -252,12 +252,12 @@ func TestAppCreate(t *testing.T) {
 	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumUint)
 	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
 
-	require.Len(t, g.appSlice[appKindBoxes], 1)
-	require.Len(t, g.appSlice[appKindSwap], 0)
-	require.Len(t, g.appMap[appKindBoxes], 1)
-	require.Len(t, g.appMap[appKindSwap], 0)
-	ad := g.appSlice[appKindBoxes][0]
-	require.Equal(t, ad, g.appMap[appKindBoxes][ad.appID])
+	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
+	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
+	require.Len(t, g.pendingAppMap[appKindBoxes], 1)
+	require.Len(t, g.pendingAppMap[appKindSwap], 0)
+	ad := g.pendingAppSlice[appKindBoxes][0]
+	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
 	require.Equal(t, hint.creator, ad.creator)
 	require.Equal(t, appKindBoxes, ad.kind)
 	optins := ad.optins
@@ -284,12 +284,12 @@ func TestAppCreate(t *testing.T) {
 	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumUint)
 	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
 
-	require.Len(t, g.appSlice[appKindBoxes], 1)
-	require.Len(t, g.appSlice[appKindSwap], 1)
-	require.Len(t, g.appMap[appKindBoxes], 1)
-	require.Len(t, g.appMap[appKindSwap], 1)
-	ad = g.appSlice[appKindSwap][0]
-	require.Equal(t, ad, g.appMap[appKindSwap][ad.appID])
+	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
+	require.Len(t, g.pendingAppSlice[appKindSwap], 1)
+	require.Len(t, g.pendingAppMap[appKindBoxes], 1)
+	require.Len(t, g.pendingAppMap[appKindSwap], 1)
+	ad = g.pendingAppSlice[appKindSwap][0]
+	require.Equal(t, ad, g.pendingAppMap[appKindSwap][ad.appID])
 	require.Equal(t, hint.creator, ad.creator)
 	require.Equal(t, appKindSwap, ad.kind)
 	optins = ad.optins
@@ -328,12 +328,12 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
 	require.Nil(t, txn.ApplicationCallTxnFields.Boxes)
 
-	require.Len(t, g.appSlice[appKindBoxes], 1)
-	require.Len(t, g.appSlice[appKindSwap], 0)
-	require.Len(t, g.appMap[appKindBoxes], 1)
-	require.Len(t, g.appMap[appKindSwap], 0)
-	ad := g.appSlice[appKindBoxes][0]
-	require.Equal(t, ad, g.appMap[appKindBoxes][ad.appID])
+	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
+	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
+	require.Len(t, g.pendingAppMap[appKindBoxes], 1)
+	require.Len(t, g.pendingAppMap[appKindSwap], 0)
+	ad := g.pendingAppSlice[appKindBoxes][0]
+	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
 	require.Equal(t, hint.creator, ad.creator)
 	require.Equal(t, appKindBoxes, ad.kind)
 	optins := ad.optins
@@ -367,12 +367,12 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Len(t, txn.ApplicationCallTxnFields.Boxes, 1)
 	require.Equal(t, crypto.Digest(pay.Sender).ToSlice(), txn.ApplicationCallTxnFields.Boxes[0].Name)
 
-	require.Len(t, g.appSlice[appKindBoxes], 1)
-	require.Len(t, g.appSlice[appKindSwap], 0)
-	require.Len(t, g.appMap[appKindBoxes], 1)
-	require.Len(t, g.appMap[appKindSwap], 0)
-	ad = g.appSlice[appKindBoxes][0]
-	require.Equal(t, ad, g.appMap[appKindBoxes][ad.appID])
+	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
+	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
+	require.Len(t, g.pendingAppMap[appKindBoxes], 1)
+	require.Len(t, g.pendingAppMap[appKindSwap], 0)
+	ad = g.pendingAppSlice[appKindBoxes][0]
+	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
 	require.Equal(t, uint64(7), ad.creator) // NOT 8!!!
 	require.Equal(t, appKindBoxes, ad.kind)
 	optins = ad.optins
@@ -410,12 +410,12 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, crypto.Digest(pay.Sender).ToSlice(), txn.ApplicationCallTxnFields.Boxes[0].Name)
 
 	// no change to app states
-	require.Len(t, g.appSlice[appKindBoxes], 1)
-	require.Len(t, g.appSlice[appKindSwap], 0)
-	require.Len(t, g.appMap[appKindBoxes], 1)
-	require.Len(t, g.appMap[appKindSwap], 0)
-	ad = g.appSlice[appKindBoxes][0]
-	require.Equal(t, ad, g.appMap[appKindBoxes][ad.appID])
+	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
+	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
+	require.Len(t, g.pendingAppMap[appKindBoxes], 1)
+	require.Len(t, g.pendingAppMap[appKindSwap], 0)
+	ad = g.pendingAppSlice[appKindBoxes][0]
+	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
 	require.Equal(t, uint64(7), ad.creator) // NOT 8!!!
 	require.Equal(t, appKindBoxes, ad.kind)
 	optins = ad.optins

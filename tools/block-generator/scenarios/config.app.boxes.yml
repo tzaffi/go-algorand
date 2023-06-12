@@ -17,5 +17,6 @@ tx_asset_create_fraction: 1.0
 app_boxes_fraction: 1.0
 
 # app boxes config
-app_boxes_create_fraction: 0.1
-app_boxes_optin_fraction: 0.9
+app_boxes_create_fraction: 0.01
+app_boxes_optin_fraction: 0.1
+app_boxes_call_fraction: 0.89

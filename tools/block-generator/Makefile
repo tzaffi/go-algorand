@@ -26,7 +26,7 @@ enter-pg:
 	docker exec -it generator-test-container psql -U algorand -d generator_db
 
 clean:
-	rm block-generator
+	rm -f block-generator
 
 block-generator: clean
 	go build
