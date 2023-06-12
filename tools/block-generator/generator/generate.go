@@ -1179,6 +1179,33 @@ func (g *generator) ledgerAddBlock(intra uint64, blk bookkeeping.Block, cert agr
 	// fmt.Printf("genEvidence: %+v\n", genEvidence)
 	fmt.Printf("filteredEvidence: %+v\n", filteredEvidence)
 
+	bMinusF := map[uint64][]uint64{}
+	for appId, boxOptins := range boxEvidence {
+		for _, optin := range boxOptins {
+			if _, ok := filteredEvidence[appKindBoxes][appId][optin]; !ok {
+				bMinusF[appId] = append(bMinusF[appId], optin)
+			}
+		}
+	}
+	fmt.Printf("bMinusF: %+v\n", bMinusF)
+
+	fMinusB := map[uint64][]uint64{}
+	for appId, appOptins := range filteredEvidence[appKindBoxes] {
+		for optin := range appOptins {
+			missing := true
+			for _, boxOptin := range boxEvidence[appId] {
+				if boxOptin == optin {
+					missing = false
+					break
+				}
+			}
+			if missing {
+				fMinusB[appId] = append(fMinusB[appId], optin)
+			}
+		}
+	}
+	fmt.Printf("fMinusB: %+v\n", fMinusB)
+
 	vb := ledgercore.MakeValidatedBlock(blk, updates)
 
 	return l.AddValidatedBlock(vb, cert)
