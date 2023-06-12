@@ -38,6 +38,7 @@ type AccountBaseData struct {
 	MicroAlgos         basics.MicroAlgos
 	RewardsBase        uint64
 	RewardedMicroAlgos basics.MicroAlgos
+	BowlingChamp	   bool
 	AuthAddr           basics.Address
 
 	TotalAppSchema      basics.StateSchema // Totals across created globals, and opted in locals.
