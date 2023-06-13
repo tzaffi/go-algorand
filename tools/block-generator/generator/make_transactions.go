@@ -30,7 +30,7 @@ import (
 
 func (g *generator) makeTxnHeader(sender basics.Address, round, intra uint64) txn.Header {
 	note := make([]byte, 8)
-	binary.LittleEndian.PutUint64(note, uint64(g.txnCounter+intra))
+	binary.LittleEndian.PutUint64(note, g.txnCounter+intra)
 
 	return txn.Header{
 		Sender:      sender,
@@ -46,7 +46,7 @@ func (g *generator) makeTxnHeader(sender basics.Address, round, intra uint64) tx
 // makeTestTxn creates and populates the flat txntest.Txn structure with the given values.
 func (g *generator) makeTestTxn(sender basics.Address, round, intra uint64) txntest.Txn {
 	note := make([]byte, 8)
-	binary.LittleEndian.PutUint64(note, uint64(g.txnCounter+intra))
+	binary.LittleEndian.PutUint64(note, g.txnCounter+intra)
 
 	return txntest.Txn{
 		Sender:      sender,
