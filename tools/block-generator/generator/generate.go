@@ -17,6 +17,9 @@
 package generator
 
 import (
+	"context"
+	_ "embed"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,93 +27,62 @@ import (
 	"os"
 	"time"
 
+	"github.com/algorand/avm-abi/apps"
+	"github.com/algorand/go-algorand/agreement"
 	cconfig "github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/ledger"
+	"github.com/algorand/go-algorand/ledger/eval"
 	"github.com/algorand/go-algorand/ledger/ledgercore"
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/protocol"
+	"github.com/algorand/go-algorand/rpcs"
 
-	"github.com/algorand/go-algorand/agreement"
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/daemon/algod/api/server/v2/generated/model"
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/data/bookkeeping"
 	"github.com/algorand/go-algorand/data/committee"
-	"github.com/algorand/go-algorand/data/transactions"
-	"github.com/algorand/go-algorand/rpcs"
+	txn "github.com/algorand/go-algorand/data/transactions"
 )
 
-// TxTypeID is the transaction type.
-type TxTypeID string
+// ---- templates ----
 
-const (
-	genesis TxTypeID = "genesis"
+//go:embed teal/poap_boxes.teal
+var approvalBoxes string
 
-	// Payment Tx IDs
-	paymentTx           TxTypeID = "pay"
-	paymentAcctCreateTx TxTypeID = "pay_create"
-	assetTx             TxTypeID = "asset"
-	//keyRegistrationTx TxTypeID = "keyreg"
-	//applicationCallTx TxTypeID = "appl"
+//go:embed teal/poap_clear.teal
+var clearBoxes string
 
-	// Asset Tx IDs
-	assetCreate  TxTypeID = "asset_create"
-	assetOptin   TxTypeID = "asset_optin"
-	assetXfer    TxTypeID = "asset_xfer"
-	assetClose   TxTypeID = "asset_close"
-	assetDestroy TxTypeID = "asset_destroy"
+//go:embed teal/swap_amm.teal
+var approvalSwap string
 
-	assetTotal = uint64(100000000000000000)
+//go:embed teal/swap_clear.teal
+var clearSwap string
 
-	consensusTimeMilli int64  = 4500
-	startingTxnCounter uint64 = 1000
-)
+// ---- init ----
 
-// GenerationConfig defines the tunable parameters for block generation.
-type GenerationConfig struct {
-	Name                         string `yaml:"name"`
-	NumGenesisAccounts           uint64 `yaml:"genesis_accounts"`
-	GenesisAccountInitialBalance uint64 `yaml:"genesis_account_balance"`
+// effects is a map that contains the hard-coded non-trivial
+// consequents of a transaction type:
+//
+// appBoxesOptin: 1 payment tx, 1 inner tx
+var effects map[TxTypeID][]TxEffect
 
-	// Block generation
-	TxnPerBlock uint64 `yaml:"tx_per_block"`
-
-	// TX Distribution
-	PaymentTransactionFraction float32 `yaml:"tx_pay_fraction"`
-	AssetTransactionFraction   float32 `yaml:"tx_asset_fraction"`
-
-	// Payment configuration
-	PaymentNewAccountFraction float32 `yaml:"pay_acct_create_fraction"`
-	PaymentFraction           float32 `yaml:"pay_xfer_fraction"`
-
-	// Asset configuration
-	AssetCreateFraction  float32 `yaml:"asset_create_fraction"`
-	AssetDestroyFraction float32 `yaml:"asset_destroy_fraction"`
-	AssetOptinFraction   float32 `yaml:"asset_optin_fraction"`
-	AssetCloseFraction   float32 `yaml:"asset_close_fraction"`
-	AssetXferFraction    float32 `yaml:"asset_xfer_fraction"`
-}
-
-func sumIsCloseToOne(numbers ...float32) bool {
-	var sum float32
-	for _, num := range numbers {
-		sum += num
+func init() {
+	effects = map[TxTypeID][]TxEffect{
+		appBoxesOptin: {
+			{effectPaymentTxSibling, 1},
+			// EXPERIMENT: ONLY COUNT SIBLING TRANSACTIONS!!!!
+			// {effectInnerTx, 2},
+		},
 	}
-	return sum > 0.99 && sum < 1.01
 }
+
+// ---- constructors ----
 
 // MakeGenerator initializes the Generator object.
 func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config GenerationConfig) (Generator, error) {
-	if !sumIsCloseToOne(config.PaymentTransactionFraction, config.AssetTransactionFraction) {
-		return nil, fmt.Errorf("transaction distribution ratios should equal 1")
-	}
-
-	if !sumIsCloseToOne(config.PaymentNewAccountFraction, config.PaymentFraction) {
-		return nil, fmt.Errorf("payment configuration ratios should equal 1")
-	}
-
-	if !sumIsCloseToOne(config.AssetCreateFraction, config.AssetDestroyFraction, config.AssetOptinFraction, config.AssetCloseFraction, config.AssetXferFraction) {
-		return nil, fmt.Errorf("asset configuration ratios should equal 1")
+	if err := config.validateWithDefaults(false); err != nil {
+		return nil, fmt.Errorf("invalid generator configuration: %w", err)
 	}
 
 	var proto protocol.ConsensusVersion = "future"
@@ -130,6 +102,7 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 		rewardsRate:               0,
 		rewardsRecalculationRound: 0,
 		reportData:                make(map[TxTypeID]TxData),
+		latestData:                make(map[TxTypeID]uint64),
 		roundOffset:               dbround,
 	}
 
@@ -143,6 +116,16 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 		gen.genesisHash = bkGenesis.Hash()
 	}
 
+	gen.resetPendingApps()
+	gen.appSlice = map[appKind][]*appData{
+		appKindBoxes: make([]*appData, 0),
+		appKindSwap:  make([]*appData, 0),
+	}
+	gen.appMap = map[appKind]map[uint64]*appData{
+		appKindBoxes: make(map[uint64]*appData),
+		appKindSwap:  make(map[uint64]*appData),
+	}
+
 	gen.initializeAccounting()
 	gen.initializeLedger()
 	for _, val := range getTransactionOptions() {
@@ -151,16 +134,25 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 			gen.transactionWeights = append(gen.transactionWeights, config.PaymentTransactionFraction)
 		case assetTx:
 			gen.transactionWeights = append(gen.transactionWeights, config.AssetTransactionFraction)
+		case applicationTx:
+			gen.transactionWeights = append(gen.transactionWeights, config.AppTransactionFraction)
+
 		}
+	}
+	if _, valid, err := validateSumCloseToOne(asPtrSlice(gen.transactionWeights)); err != nil || !valid {
+		return gen, fmt.Errorf("invalid transaction config - bad txn distribution valid=%t: %w", valid, err)
 	}
 
 	for _, val := range getPaymentTxOptions() {
 		switch val {
-		case paymentTx:
-			gen.payTxWeights = append(gen.payTxWeights, config.PaymentFraction)
 		case paymentAcctCreateTx:
 			gen.payTxWeights = append(gen.payTxWeights, config.PaymentNewAccountFraction)
+		case paymentPayTx:
+			gen.payTxWeights = append(gen.payTxWeights, config.PaymentFraction)
 		}
+	}
+	if _, valid, err := validateSumCloseToOne(asPtrSlice(gen.payTxWeights)); err != nil || !valid {
+		return gen, fmt.Errorf("invalid payment config - bad txn distribution valid=%t: %w", valid, err)
 	}
 
 	for _, val := range getAssetTxOptions() {
@@ -177,119 +169,106 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 			gen.assetTxWeights = append(gen.assetTxWeights, config.AssetCloseFraction)
 		}
 	}
+	if _, valid, err := validateSumCloseToOne(asPtrSlice(gen.assetTxWeights)); err != nil || !valid {
+		return gen, fmt.Errorf("invalid asset config - bad txn distribution valid=%t: %w", valid, err)
+	}
+
+	for _, val := range getAppTxOptions() {
+		switch val {
+		case appSwapCreate:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapCreateFraction)
+		case appSwapUpdate:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapUpdateFraction)
+		case appSwapDelete:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapDeleteFraction)
+		case appSwapOptin:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapOptinFraction)
+		case appSwapCall:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapCallFraction)
+		case appSwapClose:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapCloseFraction)
+		case appSwapClear:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapClearFraction)
+		case appBoxesCreate:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCreateFraction)
+		case appBoxesUpdate:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesUpdateFraction)
+		case appBoxesDelete:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesDeleteFraction)
+		case appBoxesOptin:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesOptinFraction)
+		case appBoxesCall:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCallFraction)
+		case appBoxesClose:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCloseFraction)
+		case appBoxesClear:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesClearFraction)
+		}
+	}
+	if _, valid, err := validateSumCloseToOne(asPtrSlice(gen.appTxWeights)); err != nil || !valid {
+		return gen, fmt.Errorf("invalid app config - bad txn distribution valid=%t: %w", valid, err)
+	}
 
 	return gen, nil
 }
 
-// Generator is the interface needed to generate blocks.
-type Generator interface {
-	WriteReport(output io.Writer) error
-	WriteGenesis(output io.Writer) error
-	WriteBlock(output io.Writer, round uint64) error
-	WriteAccount(output io.Writer, accountString string) error
-	WriteStatus(output io.Writer) error
-	WriteDeltas(output io.Writer, round uint64) error
-	Accounts() <-chan basics.Address
-	Stop()
+func (g *generator) resetPendingApps() {
+	g.pendingAppSlice = map[appKind][]*appData{
+		appKindBoxes: make([]*appData, 0),
+		appKindSwap:  make([]*appData, 0),
+	}
+	g.pendingAppMap = map[appKind]map[uint64]*appData{
+		appKindBoxes: make(map[uint64]*appData),
+		appKindSwap:  make(map[uint64]*appData),
+	}
 }
 
-type generator struct {
-	config GenerationConfig
-
-	// payment transaction metadata
-	numPayments uint64
-
-	// Number of algorand accounts
-	numAccounts uint64
-
-	// Block stuff
-	round         uint64
-	txnCounter    uint64
-	prevBlockHash string
-	timestamp     int64
-	protocol      protocol.ConsensusVersion
-	params        cconfig.ConsensusParams
-	genesis       bookkeeping.Genesis
-	genesisID     string
-	genesisHash   crypto.Digest
-
-	// Rewards stuff
-	feeSink                   basics.Address
-	rewardsPool               basics.Address
-	rewardsLevel              uint64
-	rewardsResidue            uint64
-	rewardsRate               uint64
-	rewardsRecalculationRound uint64
-
-	// balances for all accounts. To avoid crypto and reduce storage, accounts are faked.
-	// The account is based on the index into the balances array.
-	balances []uint64
-
-	// assets is a minimal representation of the asset holdings, it doesn't
-	// include the frozen state.
-	assets []*assetData
-	// pendingAssets is used to hold newly created assets so that they are not used before
-	// being created.
-	pendingAssets []*assetData
-
-	transactionWeights []float32
-	payTxWeights       []float32
-	assetTxWeights     []float32
-
-	// Reporting information from transaction type to data
-	reportData Report
-
-	// ledger
-	ledger *ledger.Ledger
-
-	roundOffset uint64
+// initializeAccounting creates the genesis accounts.
+func (g *generator) initializeAccounting() {
+	g.numPayments = 0
+	g.numAccounts = g.config.NumGenesisAccounts
+	for i := uint64(0); i < g.config.NumGenesisAccounts; i++ {
+		g.balances = append(g.balances, g.config.GenesisAccountInitialBalance)
+	}
 }
 
-type assetData struct {
-	assetID uint64
-	creator uint64
-	name    string
-	// Holding at index 0 is the creator.
-	holdings []*assetHolding
-	// Set of holders in the holdings array for easy reference.
-	holders map[uint64]*assetHolding
+func (g *generator) initializeLedger() {
+	genBal := convertToGenesisBalances(g.balances)
+	// add rewards pool with min balance
+	genBal[g.rewardsPool] = basics.AccountData{
+		MicroAlgos: basics.MicroAlgos{Raw: g.params.MinBalance},
+	}
+	bal := bookkeeping.MakeGenesisBalances(genBal, g.feeSink, g.rewardsPool)
+	block, err := bookkeeping.MakeGenesisBlock(g.protocol, bal, g.genesisID, g.genesisHash)
+	if err != nil {
+		fmt.Printf("error making genesis: %v\n.", err)
+		os.Exit(1)
+	}
+	var prefix string
+	if g.genesisID == "" {
+		prefix = "block-generator"
+	} else {
+		prefix = g.genesisID
+	}
+	l, err := ledger.OpenLedger(logging.Base(), prefix, true, ledgercore.InitState{
+		Block:       block,
+		Accounts:    bal.Balances,
+		GenesisHash: g.genesisHash,
+	}, cconfig.GetDefaultLocal())
+	if err != nil {
+		fmt.Printf("error initializing ledger: %v\n.", err)
+		os.Exit(1)
+	}
+	g.ledger = l
 }
 
-type assetHolding struct {
-	acctIndex uint64
-	balance   uint64
-}
-
-// Report is the generation report.
-type Report map[TxTypeID]TxData
-
-// TxData is the generator report data.
-type TxData struct {
-	GenerationTime  time.Duration `json:"generation_time_milli"`
-	GenerationCount uint64        `json:"num_generated"`
-}
-
-func track(id TxTypeID) (TxTypeID, time.Time) {
-	return id, time.Now()
-}
-func (g *generator) recordData(id TxTypeID, start time.Time) {
-	data := g.reportData[id]
-	data.GenerationCount++
-	data.GenerationTime += time.Since(start)
-	g.reportData[id] = data
-}
+// ---- implement Generator interface ----
 
 func (g *generator) WriteReport(output io.Writer) error {
 	return json.NewEncoder(output).Encode(g.reportData)
 }
 
-func (g *generator) WriteStatus(output io.Writer) error {
-	response := model.NodeStatusResponse{
-		LastRound: g.round + g.roundOffset,
-	}
-	return json.NewEncoder(output).Encode(response)
-}
-
+// WriteGenesis writes the genesis file and advances the round.
 func (g *generator) WriteGenesis(output io.Writer) error {
 	defer g.recordData(track(genesis))
 
@@ -335,460 +314,139 @@ func (g *generator) WriteGenesis(output io.Writer) error {
 	return err
 }
 
-func getTransactionOptions() []interface{} {
-	return []interface{}{paymentTx, assetTx}
-}
-
-func (g *generator) generateTransaction(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
-	selection, err := weightedSelection(g.transactionWeights, getTransactionOptions(), paymentTx)
-	if err != nil {
-		return transactions.SignedTxn{}, transactions.ApplyData{}, err
-	}
-
-	switch selection {
-	case paymentTx:
-		return g.generatePaymentTxn(round, intra)
-	case assetTx:
-		return g.generateAssetTxn(round, intra)
-	default:
-		return transactions.SignedTxn{}, transactions.ApplyData{}, fmt.Errorf("no generator available for %s", selection)
-	}
-}
-
-func (g *generator) txnForRound(round uint64) uint64 {
-	// There are no transactions in the 0th round
-	if round == 0 {
-		return 0
-	}
-	return g.config.TxnPerBlock
-}
-
-// finishRound tells the generator it can apply any pending state.
-func (g *generator) finishRound(txnCount uint64) {
-	g.txnCounter += txnCount
-
-	g.timestamp += consensusTimeMilli
-	g.round++
-
-	// Apply pending assets...
-	g.assets = append(g.assets, g.pendingAssets...)
-	g.pendingAssets = nil
-}
-
 // WriteBlock generates a block full of new transactions and writes it to the writer.
+// The most recent round is cached, allowing requests to the same round multiple times.
+// This is motivated by the fact that Conduit's logic requests the initial round during
+// its Init() for catchup purposes, and once again when it starts ingesting blocks.
+// There are a few constraints on the generator arising from the fact that
+// blocks must be generated sequentially and that a fixed offset between the
+// database round and the generator round is presumed:
+//   - requested round < offset ---> error
+//   - requested round == offset: the generator will provide a genesis block or offset block
+//   - requested round == generator's round + offset ---> generate a block,
+//		advance the round, and cache the block in case of repeated requests.
+//   - requested round == generator's round + offset - 1 ---> write the cached block
+//		but do not advance the round.
+//   - requested round < generator's round + offset - 1 ---> error
+//
+// NOTE: nextRound represents the generator's expectations about the next database round.
 func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 	if round < g.roundOffset {
 		return fmt.Errorf("cannot generate block for round %d, already in database", round)
 	}
-	if round-g.roundOffset != g.round {
-		return fmt.Errorf("generator only supports sequential block access. Expected %d but received request for %d", g.round+g.roundOffset, round)
+
+	nextRound := g.round + g.roundOffset
+	cachedRound := nextRound - 1
+
+	if round != nextRound && round != cachedRound {
+		return fmt.Errorf(
+			"generator only supports sequential block access. Expected %d or %d but received request for %d",
+			cachedRound,
+			nextRound,
+			round,
+		)
 	}
+	// round must either be nextRound or cachedRound
+
+	if round == cachedRound {
+		// one round behind, so write the cached block (if non-empty)
+		fmt.Printf("Received round request %d, but nextRound=%d. Not finishing round.\n", round, nextRound)
+		if len(g.latestBlockMsgp) != 0 {
+			// write the msgpack bytes for a block
+			_, err := output.Write(g.latestBlockMsgp)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// round == nextRound case
+
 	numTxnForBlock := g.txnForRound(g.round)
 
-	// return genesis block. offset round for non-empty database
-	if round-g.roundOffset == 0 {
-		// write the msgpack bytes for a block
-		block, _, _ := g.ledger.BlockCert(basics.Round(round - g.roundOffset))
-		// return the block with the requested round number
-		block.BlockHeader.Round = basics.Round(round)
-		encodedblock := rpcs.EncodedBlockCert{Block: block}
-		blk := protocol.EncodeMsgp(&encodedblock)
-		// write the msgpack bytes for a block
-		_, err := output.Write(blk)
+	var intra uint64 = 0
+	var cert rpcs.EncodedBlockCert
+	if g.round == 0 {
+		// we'll write genesis block / offset round for non-empty database
+		cert.Block, _, _ = g.ledger.BlockCert(basics.Round(round - g.roundOffset))
+	} else {
+		// generate a block
+		cert.Block.BlockHeader = bookkeeping.BlockHeader{
+			Round:          basics.Round(g.round),
+			Branch:         bookkeeping.BlockHash{},
+			Seed:           committee.Seed{},
+			TxnCommitments: bookkeeping.TxnCommitments{NativeSha512_256Commitment: crypto.Digest{}},
+			TimeStamp:      g.timestamp,
+			GenesisID:      g.genesisID,
+			GenesisHash:    g.genesisHash,
+			RewardsState: bookkeeping.RewardsState{
+				FeeSink:                   g.feeSink,
+				RewardsPool:               g.rewardsPool,
+				RewardsLevel:              0,
+				RewardsRate:               0,
+				RewardsResidue:            0,
+				RewardsRecalculationRound: 0,
+			},
+			UpgradeState: bookkeeping.UpgradeState{
+				CurrentProtocol: g.protocol,
+			},
+			UpgradeVote:        bookkeeping.UpgradeVote{},
+			TxnCounter:         g.txnCounter + numTxnForBlock,
+			StateProofTracking: nil,
+		}
+
+		// Generate the transactions
+		transactions := make([]txn.SignedTxnInBlock, 0, numTxnForBlock)
+		for intra < numTxnForBlock {
+			var signedTxns []txn.SignedTxn
+			var ads []txn.ApplyData
+			var err error
+			signedTxns, ads, intra, err = g.generateSignedTxns(g.round, intra)
+			if err != nil {
+				// return err
+				panic(fmt.Sprintf("failed to generate transaction: %v\n", err))
+			}
+			if len(signedTxns) == 0 {
+				panic("failed to generate transaction: no transactions given\n")
+			}
+			if len(signedTxns) != len(ads) {
+				panic(fmt.Sprintf("failed to generate transaction: mismatched number of signed transactions (%d) and apply data (%d\n", len(signedTxns), len(ads)))
+			}
+			for i, stx := range signedTxns {
+				stib, err := cert.Block.BlockHeader.EncodeSignedTxn(stx, ads[i])
+				if err != nil {
+					// return err
+					panic(fmt.Sprintf("failed to encode transaction: %v\n", err))
+				}
+				transactions = append(transactions, stib)
+			}
+		}
+
+		if intra < numTxnForBlock {
+			return fmt.Errorf("unexpected number of transactions: %d > %d", numTxnForBlock, intra)
+			// panic("Unexpected number of transactions.")
+		}
+
+		cert.Block.Payset = transactions
+		cert.Certificate = agreement.Certificate{} // empty certificate for clarity
+
+		// err := g.ledger.AddBlock(cert.Block, cert.Certificate)
+		err := g.ledgerAddBlock(intra, cert.Block, cert.Certificate)
 		if err != nil {
 			return err
 		}
-		g.finishRound(numTxnForBlock)
-		return nil
 	}
-
-	header := bookkeeping.BlockHeader{
-		Round:          basics.Round(g.round),
-		Branch:         bookkeeping.BlockHash{},
-		Seed:           committee.Seed{},
-		TxnCommitments: bookkeeping.TxnCommitments{NativeSha512_256Commitment: crypto.Digest{}},
-		TimeStamp:      g.timestamp,
-		GenesisID:      g.genesisID,
-		GenesisHash:    g.genesisHash,
-		RewardsState: bookkeeping.RewardsState{
-			FeeSink:                   g.feeSink,
-			RewardsPool:               g.rewardsPool,
-			RewardsLevel:              0,
-			RewardsRate:               0,
-			RewardsResidue:            0,
-			RewardsRecalculationRound: 0,
-		},
-		UpgradeState: bookkeeping.UpgradeState{
-			CurrentProtocol: g.protocol,
-		},
-		UpgradeVote:        bookkeeping.UpgradeVote{},
-		TxnCounter:         g.txnCounter + numTxnForBlock,
-		StateProofTracking: nil,
-	}
-
-	// Generate the transactions
-	transactions := make([]transactions.SignedTxnInBlock, 0, numTxnForBlock)
-
-	for i := uint64(0); i < numTxnForBlock; i++ {
-		txn, ad, err := g.generateTransaction(g.round, i)
-		if err != nil {
-			panic(fmt.Sprintf("failed to generate transaction: %v\n", err))
-		}
-		stib, err := header.EncodeSignedTxn(txn, ad)
-		if err != nil {
-			panic(fmt.Sprintf("failed to encode transaction: %v\n", err))
-		}
-		transactions = append(transactions, stib)
-	}
-
-	if numTxnForBlock != uint64(len(transactions)) {
-		panic("Unexpected number of transactions.")
-	}
-
-	cert := rpcs.EncodedBlockCert{
-		Block: bookkeeping.Block{
-			BlockHeader: header,
-			Payset:      transactions,
-		},
-		Certificate: agreement.Certificate{},
-	}
-
-	err := g.ledger.AddBlock(cert.Block, cert.Certificate)
-	if err != nil {
-		return err
-	}
-	// return the block with the requested round number
 	cert.Block.BlockHeader.Round = basics.Round(round)
-	block := protocol.EncodeMsgp(&cert)
-	if err != nil {
-		return err
-	}
+
 	// write the msgpack bytes for a block
-	_, err = output.Write(block)
+	g.latestBlockMsgp = protocol.EncodeMsgp(&cert)
+	_, err := output.Write(g.latestBlockMsgp)
 	if err != nil {
 		return err
 	}
-	g.finishRound(numTxnForBlock)
+
+	g.finishRound(intra)
 	return nil
-}
-
-// WriteDeltas generates returns the deltas for payset.
-func (g *generator) WriteDeltas(output io.Writer, round uint64) error {
-	// the first generated round has no statedelta.
-	if round-g.roundOffset == 0 {
-		data, _ := encode(protocol.CodecHandle, ledgercore.StateDelta{})
-		_, err := output.Write(data)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	delta, err := g.ledger.GetStateDeltaForRound(basics.Round(round - g.roundOffset))
-	if err != nil {
-		return fmt.Errorf("err getting state delta for round %d: %w", round, err)
-	}
-	// msgp encode deltas
-	data, err := encode(protocol.CodecHandle, delta)
-	if err != nil {
-		return err
-	}
-	_, err = output.Write(data)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// initializeAccounting creates the genesis accounts.
-func (g *generator) initializeAccounting() {
-	if g.config.NumGenesisAccounts == 0 {
-		panic("Number of genesis accounts must be > 0.")
-	}
-
-	g.numPayments = 0
-	g.numAccounts = g.config.NumGenesisAccounts
-	for i := uint64(0); i < g.config.NumGenesisAccounts; i++ {
-		g.balances = append(g.balances, g.config.GenesisAccountInitialBalance)
-	}
-}
-
-func signTxn(txn transactions.Transaction) transactions.SignedTxn {
-	stxn := transactions.SignedTxn{
-		Sig:      crypto.Signature{},
-		Msig:     crypto.MultisigSig{},
-		Lsig:     transactions.LogicSig{},
-		Txn:      txn,
-		AuthAddr: basics.Address{},
-	}
-
-	// TODO: Would it be useful to generate a random signature?
-	stxn.Sig[32] = 50
-
-	return stxn
-}
-
-func getPaymentTxOptions() []interface{} {
-	return []interface{}{paymentTx, paymentAcctCreateTx}
-}
-
-// generatePaymentTxn creates a new payment transaction. The sender is always a genesis account, the receiver is random,
-// or a new account.
-func (g *generator) generatePaymentTxn(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
-	selection, err := weightedSelection(g.payTxWeights, getPaymentTxOptions(), paymentTx)
-	if err != nil {
-		return transactions.SignedTxn{}, transactions.ApplyData{}, err
-	}
-	return g.generatePaymentTxnInternal(selection.(TxTypeID), round, intra)
-}
-
-func (g *generator) generatePaymentTxnInternal(selection TxTypeID, round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
-	defer g.recordData(track(selection))
-	minBal := g.params.MinBalance
-
-	// default amount
-	amount := uint64(1)
-
-	// Select a receiver
-	var receiveIndex uint64
-	switch selection {
-	case paymentTx:
-		receiveIndex = rand.Uint64() % g.numAccounts
-	case paymentAcctCreateTx:
-		// give new accounts get extra algos for sending other transactions
-		amount = minBal * 100
-		g.balances = append(g.balances, 0)
-		receiveIndex = g.numAccounts
-		g.numAccounts++
-	}
-	total := amount + g.params.MinTxnFee
-
-	// Select a sender from genesis account
-	sendIndex := g.numPayments % g.config.NumGenesisAccounts
-	if g.balances[sendIndex] < (total + minBal) {
-		fmt.Printf("\n\ngeneratePaymentTxnInternal(): the sender account does not have enough algos for the transfer. idx %d, payment number %d\n\n", sendIndex, g.numPayments)
-		os.Exit(1)
-	}
-
-	sender := indexToAccount(sendIndex)
-	receiver := indexToAccount(receiveIndex)
-
-	g.balances[sendIndex] -= total
-	g.balances[receiveIndex] += amount
-
-	g.numPayments++
-
-	txn := g.makePaymentTxn(g.makeTxnHeader(sender, round, intra), receiver, amount, basics.Address{})
-	return signTxn(txn), transactions.ApplyData{}, nil
-}
-
-func getAssetTxOptions() []interface{} {
-	return []interface{}{assetCreate, assetDestroy, assetOptin, assetXfer, assetClose}
-}
-
-func (g *generator) generateAssetTxnInternal(txType TxTypeID, round uint64, intra uint64) (actual TxTypeID, txn transactions.Transaction) {
-	return g.generateAssetTxnInternalHint(txType, round, intra, 0, nil)
-}
-
-func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, intra uint64, hintIndex uint64, hint *assetData) (actual TxTypeID, txn transactions.Transaction) {
-	actual = txType
-	// If there are no assets the next operation needs to be a create.
-	if len(g.assets) == 0 {
-		actual = assetCreate
-	}
-
-	numAssets := uint64(len(g.assets))
-	var senderIndex uint64
-	if actual == assetCreate {
-		numAssets = uint64(len(g.assets)) + uint64(len(g.pendingAssets))
-		senderIndex = numAssets % g.config.NumGenesisAccounts
-		senderAcct := indexToAccount(senderIndex)
-
-		total := assetTotal
-		assetID := g.txnCounter + intra + 1
-		assetName := fmt.Sprintf("asset #%d", assetID)
-		txn = g.makeAssetCreateTxn(g.makeTxnHeader(senderAcct, round, intra), total, false, assetName)
-		// Compute asset ID and initialize holdings
-		holding := assetHolding{
-			acctIndex: senderIndex,
-			balance:   total,
-		}
-		a := assetData{
-			name:     assetName,
-			assetID:  assetID,
-			creator:  senderIndex,
-			holdings: []*assetHolding{&holding},
-			holders:  map[uint64]*assetHolding{senderIndex: &holding},
-		}
-
-		g.pendingAssets = append(g.pendingAssets, &a)
-	} else {
-		assetIndex := rand.Uint64() % numAssets
-		asset := g.assets[assetIndex]
-		if hint != nil {
-			assetIndex = hintIndex
-			asset = hint
-		}
-
-		switch actual {
-		case assetDestroy:
-			// delete asset
-
-			// If the creator doesn't have all of them, close instead
-			if asset.holdings[0].balance != assetTotal {
-				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetIndex, asset)
-			}
-
-			senderIndex = asset.creator
-			creator := indexToAccount(senderIndex)
-			txn = g.makeAssetDestroyTxn(g.makeTxnHeader(creator, round, intra), asset.assetID)
-
-			// Remove asset by moving the last element to the deleted index then trimming the slice.
-			g.assets[assetIndex] = g.assets[numAssets-1]
-			g.assets = g.assets[:numAssets-1]
-		case assetOptin:
-			// select a random account from asset to optin
-
-			// If every account holds the asset, close instead of optin
-			if uint64(len(asset.holdings)) == g.numAccounts {
-				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetIndex, asset)
-			}
-
-			// look for an account that does not hold the asset
-			exists := true
-			for exists {
-				senderIndex = rand.Uint64() % g.numAccounts
-				exists = asset.holders[senderIndex] != nil
-			}
-			account := indexToAccount(senderIndex)
-			txn = g.makeAssetAcceptanceTxn(g.makeTxnHeader(account, round, intra), asset.assetID)
-
-			holding := assetHolding{
-				acctIndex: senderIndex,
-				balance:   0,
-			}
-			asset.holdings = append(asset.holdings, &holding)
-			asset.holders[senderIndex] = &holding
-		case assetXfer:
-			// send from creator (holder[0]) to another random holder (same address is valid)
-
-			// If there aren't enough assets to close one, optin an account instead
-			if len(asset.holdings) == 1 {
-				return g.generateAssetTxnInternalHint(assetOptin, round, intra, assetIndex, asset)
-			}
-
-			senderIndex = asset.holdings[0].acctIndex
-			sender := indexToAccount(senderIndex)
-
-			receiverArrayIndex := (rand.Uint64() % (uint64(len(asset.holdings)) - uint64(1))) + uint64(1)
-			receiver := indexToAccount(asset.holdings[receiverArrayIndex].acctIndex)
-			amount := uint64(10)
-
-			txn = g.makeAssetTransferTxn(g.makeTxnHeader(sender, round, intra), receiver, amount, basics.Address{}, asset.assetID)
-
-			if asset.holdings[0].balance < amount {
-				fmt.Printf("\n\ncreator doesn't have enough funds for asset %d\n\n", asset.assetID)
-				os.Exit(1)
-			}
-			if g.balances[asset.holdings[0].acctIndex] < g.params.MinTxnFee {
-				fmt.Printf("\n\ncreator doesn't have enough funds for transaction %d\n\n", asset.assetID)
-				os.Exit(1)
-			}
-
-			asset.holdings[0].balance -= amount
-			asset.holdings[receiverArrayIndex].balance += amount
-		case assetClose:
-			// select a holder of a random asset to close out
-			// If there aren't enough assets to close one, optin an account instead
-			if len(asset.holdings) == 1 {
-				return g.generateAssetTxnInternalHint(
-					assetOptin, round, intra, assetIndex, asset)
-			}
-
-			numHoldings := uint64(len(asset.holdings))
-			closeIndex := (rand.Uint64() % (numHoldings - 1)) + uint64(1)
-			senderIndex = asset.holdings[closeIndex].acctIndex
-			sender := indexToAccount(senderIndex)
-
-			closeToAcctIndex := asset.holdings[0].acctIndex
-			closeToAcct := indexToAccount(closeToAcctIndex)
-
-			txn = g.makeAssetTransferTxn(
-				g.makeTxnHeader(sender, round, intra), closeToAcct, 0, closeToAcct, asset.assetID)
-
-			asset.holdings[0].balance += asset.holdings[closeIndex].balance
-
-			// Remove asset by moving the last element to the deleted index then trimming the slice.
-			asset.holdings[closeIndex] = asset.holdings[numHoldings-1]
-			asset.holdings = asset.holdings[:numHoldings-1]
-			delete(asset.holders, senderIndex)
-		default:
-		}
-	}
-
-	if indexToAccount(senderIndex) != txn.Sender {
-		fmt.Printf("failed to properly set sender index.")
-		os.Exit(1)
-	}
-
-	if g.balances[senderIndex] < txn.Fee.ToUint64() {
-		fmt.Printf("\n\nthe sender account does not have enough algos for the transfer. idx %d, asset transaction type %v, num %d\n\n", senderIndex, actual, g.reportData[actual].GenerationCount)
-		os.Exit(1)
-	}
-	g.balances[senderIndex] -= txn.Fee.ToUint64()
-	return
-}
-
-func (g *generator) generateAssetTxn(round uint64, intra uint64) (transactions.SignedTxn, transactions.ApplyData, error) {
-	start := time.Now()
-	selection, err := weightedSelection(g.assetTxWeights, getAssetTxOptions(), assetXfer)
-	if err != nil {
-		return transactions.SignedTxn{}, transactions.ApplyData{}, err
-	}
-
-	actual, txn := g.generateAssetTxnInternal(selection.(TxTypeID), round, intra)
-	defer g.recordData(actual, start)
-
-	if txn.Type == "" {
-		fmt.Println("Empty asset transaction.")
-		os.Exit(1)
-	}
-
-	return signTxn(txn), transactions.ApplyData{}, nil
-}
-
-func (g *generator) initializeLedger() {
-	genBal := convertToGenesisBalances(g.balances)
-	// add rewards pool with min balance
-	genBal[g.rewardsPool] = basics.AccountData{
-		MicroAlgos: basics.MicroAlgos{Raw: g.params.MinBalance},
-	}
-	bal := bookkeeping.MakeGenesisBalances(genBal, g.feeSink, g.rewardsPool)
-	block, err := bookkeeping.MakeGenesisBlock(g.protocol, bal, g.genesisID, g.genesisHash)
-	if err != nil {
-		fmt.Printf("error making genesis: %v\n.", err)
-		os.Exit(1)
-	}
-	var prefix string
-	if g.genesisID == "" {
-		prefix = "block-generator"
-	} else {
-		prefix = g.genesisID
-	}
-	l, err := ledger.OpenLedger(logging.Base(), prefix, true, ledgercore.InitState{
-		Block:       block,
-		Accounts:    bal.Balances,
-		GenesisHash: g.genesisHash,
-	}, cconfig.GetDefaultLocal())
-	if err != nil {
-		fmt.Printf("error initializing ledger: %v\n.", err)
-		os.Exit(1)
-	}
-	g.ledger = l
-}
-
-// Stop cleans up allocated resources.
-func (g *generator) Stop() {
-	g.ledger.Close()
 }
 
 func (g *generator) WriteAccount(output io.Writer, accountString string) error {
@@ -857,14 +515,794 @@ func (g *generator) WriteAccount(output io.Writer, accountString string) error {
 	return json.NewEncoder(output).Encode(data)
 }
 
-// Accounts is used in the runner to generate a list of addresses.
-func (g *generator) Accounts() <-chan basics.Address {
-	results := make(chan basics.Address, 10)
-	go func() {
-		defer close(results)
-		for i := uint64(0); i < g.numAccounts; i++ {
-			results <- indexToAccount(i)
+// WriteDeltas generates returns the deltas for payset.
+func (g *generator) WriteDeltas(output io.Writer, round uint64) error {
+	// the first generated round has no statedelta.
+	if round-g.roundOffset == 0 {
+		data, _ := encode(protocol.CodecHandle, ledgercore.StateDelta{})
+		_, err := output.Write(data)
+		if err != nil {
+			return err
 		}
-	}()
-	return results
+		return nil
+	}
+	delta, err := g.ledger.GetStateDeltaForRound(basics.Round(round - g.roundOffset))
+	if err != nil {
+		return fmt.Errorf("err getting state delta for round %d: %w", round, err)
+	}
+	// msgp encode deltas
+	data, err := encode(protocol.CodecHandle, delta)
+	if err != nil {
+		return err
+	}
+	_, err = output.Write(data)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (g *generator) WriteStatus(output io.Writer) error {
+	response := model.NodeStatusResponse{
+		LastRound: g.round + g.roundOffset,
+	}
+	return json.NewEncoder(output).Encode(response)
+}
+
+// Stop cleans up allocated resources.
+func (g *generator) Stop() {
+	g.ledger.Close()
+}
+
+// ---- transaction options vectors ----
+
+func getTransactionOptions() []interface{} {
+	return []interface{}{paymentTx, assetTx, applicationTx}
+}
+
+func getPaymentTxOptions() []interface{} {
+	return []interface{}{paymentAcctCreateTx, paymentPayTx}
+}
+
+func getAssetTxOptions() []interface{} {
+	return []interface{}{assetCreate, assetDestroy, assetOptin, assetClose, assetXfer}
+}
+
+func getAppTxOptions() []interface{} {
+	return []interface{}{
+		appSwapCreate, appSwapUpdate, appSwapDelete, appSwapOptin, appSwapCall, appSwapClose, appSwapClear,
+		appBoxesCreate, appBoxesUpdate, appBoxesDelete, appBoxesOptin, appBoxesCall, appBoxesClose, appBoxesClear,
+	}
+}
+
+// ---- Transaction Generation (Pay/Asset/Apps) ----
+
+func (g *generator) generateSignedTxns(round uint64, intra uint64) ([]txn.SignedTxn, []txn.ApplyData, uint64 /* nextIntra */, error) {
+	// TODO: return the number of transactions generated instead of updating intra!!!
+	selection, err := weightedSelection(g.transactionWeights, getTransactionOptions(), paymentTx)
+	if err != nil {
+		return nil, nil, intra, err
+	}
+
+	var signedTxns []txn.SignedTxn
+	var ads []txn.ApplyData
+	var nextIntra uint64
+	var expectedID uint64
+	switch selection {
+	case paymentTx:
+		var signedTxn txn.SignedTxn
+		var ad txn.ApplyData
+		signedTxn, ad, nextIntra, err = g.generatePaymentTxn(round, intra)
+		signedTxns = []txn.SignedTxn{signedTxn}
+		ads = []txn.ApplyData{ad}
+		// return []txn.SignedTxn{signedTxn}, []txn.ApplyData{ad}, nextIntra, err
+	case assetTx:
+		var signedTxn txn.SignedTxn
+		var ad txn.ApplyData
+		signedTxn, ad, nextIntra, expectedID, err = g.generateAssetTxn(round, intra)
+		signedTxns = []txn.SignedTxn{signedTxn}
+		ads = []txn.ApplyData{ad}
+		// return []txn.SignedTxn{signedTxn}, []txn.ApplyData{ad}, nextIntra, err
+	case applicationTx:
+		signedTxns, ads, nextIntra, expectedID, err = g.generateAppTxn(round, intra)
+		// return signedTxns, ads, nextIntra, err
+	default:
+		return nil, nil, intra, fmt.Errorf("no generator available for %s", selection)
+	}
+
+	if err != nil {
+		return nil, nil, intra, fmt.Errorf("error generating transaction: %w", err)
+	}
+
+	if len(signedTxns) == 0 {
+		return nil, nil, intra, fmt.Errorf("no transactions generated")
+	}
+
+	for i := range signedTxns {
+		g.latestPaysetWithExpectedID = append(
+			g.latestPaysetWithExpectedID,
+			txnWithExpectedID{
+				expectedID: expectedID,
+				signedTxn:  &signedTxns[i],
+				intra:      intra,
+				nextIntra:  nextIntra,
+			},
+		)
+	}
+	return signedTxns, ads, nextIntra, nil
+}
+
+// ---- 1. Pay Transactions ----
+
+// generatePaymentTxn creates a new payment transaction. The sender is always a genesis account, the receiver is random,
+// or a new account.
+func (g *generator) generatePaymentTxn(round uint64, intra uint64) (txn.SignedTxn, txn.ApplyData, uint64 /* nextIntra */, error) {
+	selection, err := weightedSelection(g.payTxWeights, getPaymentTxOptions(), paymentPayTx)
+	if err != nil {
+		return txn.SignedTxn{}, txn.ApplyData{}, intra, err
+	}
+	return g.generatePaymentTxnInternal(selection.(TxTypeID), round, intra)
+}
+
+func (g *generator) generatePaymentTxnInternal(selection TxTypeID, round uint64, intra uint64) (txn.SignedTxn, txn.ApplyData, uint64 /* nextIntra */, error) {
+	defer g.recordData(track(selection))
+	minBal := g.params.MinBalance
+
+	// default amount
+	amount := uint64(1)
+
+	// Select a receiver
+	var receiveIndex uint64
+	switch selection {
+	case paymentPayTx:
+		receiveIndex = rand.Uint64() % g.numAccounts
+	case paymentAcctCreateTx:
+		// give new accounts get extra algos for sending other transactions
+		amount = minBal * 100
+		g.balances = append(g.balances, 0)
+		receiveIndex = g.numAccounts
+		g.numAccounts++
+	}
+	total := amount + g.params.MinTxnFee
+
+	// Select a sender from genesis account
+	sendIndex := g.numPayments % g.config.NumGenesisAccounts
+	if g.balances[sendIndex] < (total + minBal) {
+		// TODO: shouldn't we just return an error?
+		fmt.Printf("\n\ngeneratePaymentTxnInternal(): the sender account does not have enough algos for the transfer. idx %d, payment number %d\n\n", sendIndex, g.numPayments)
+		os.Exit(1)
+	}
+
+	sender := indexToAccount(sendIndex)
+	receiver := indexToAccount(receiveIndex)
+
+	g.balances[sendIndex] -= total
+	g.balances[receiveIndex] += amount
+
+	g.numPayments++
+
+	transaction := g.makePaymentTxn(g.makeTxnHeader(sender, round, intra), receiver, amount, basics.Address{})
+	return signTxn(transaction), txn.ApplyData{}, intra + 1, nil
+}
+
+// ---- 2. Asset Transactions ----
+
+func (g *generator) generateAssetTxn(round uint64, intra uint64) (txn.SignedTxn, txn.ApplyData, uint64 /* nextIntra */, uint64 /* assetID */, error) {
+	start := time.Now()
+	selection, err := weightedSelection(g.assetTxWeights, getAssetTxOptions(), assetXfer)
+	if err != nil {
+		return txn.SignedTxn{}, txn.ApplyData{}, intra, 0, err
+	}
+
+	actual, transaction, assetID := g.generateAssetTxnInternal(selection.(TxTypeID), round, intra)
+	defer g.recordData(actual, start)
+
+	// TODO: shouldn't we just return an error?
+	if transaction.Type == "" {
+		fmt.Println("Empty asset transaction.")
+		os.Exit(1)
+	}
+
+	return signTxn(transaction), txn.ApplyData{}, intra + 1, assetID, nil
+}
+
+func (g *generator) generateAssetTxnInternal(txType TxTypeID, round uint64, intra uint64) (actual TxTypeID, txn txn.Transaction, assetID uint64) {
+	return g.generateAssetTxnInternalHint(txType, round, intra, 0, nil)
+}
+
+func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, intra uint64, hintIndex uint64, hint *assetData) (actual TxTypeID, txn txn.Transaction, assetID uint64) {
+	actual = txType
+	// If there are no assets the next operation needs to be a create.
+	numAssets := uint64(len(g.assets))
+
+	if numAssets == 0 {
+		actual = assetCreate
+	}
+	var senderIndex uint64
+	if actual == assetCreate {
+		numAssets += uint64(len(g.pendingAssets))
+		senderIndex = numAssets % g.config.NumGenesisAccounts
+		senderAcct := indexToAccount(senderIndex)
+
+		total := assetTotal
+		assetID = g.txnCounter + intra + 1
+		assetName := fmt.Sprintf("asset #%d", assetID)
+		txn = g.makeAssetCreateTxn(g.makeTxnHeader(senderAcct, round, intra), total, false, assetName)
+		// Compute asset ID and initialize holdings
+		holding := assetHolding{
+			acctIndex: senderIndex,
+			balance:   total,
+		}
+		a := assetData{
+			name:     assetName,
+			assetID:  assetID,
+			creator:  senderIndex,
+			holdings: []*assetHolding{&holding},
+			holders:  map[uint64]*assetHolding{senderIndex: &holding},
+		}
+
+		g.pendingAssets = append(g.pendingAssets, &a)
+	} else {
+		// var assetIndex uint64
+		var asset *assetData
+		if hint != nil {
+			assetID = hintIndex
+			asset = hint
+		} else {
+			assetID = rand.Uint64() % numAssets
+			asset = g.assets[assetID]
+		}
+
+		switch actual {
+		case assetDestroy:
+			// delete asset
+
+			// If the creator doesn't have all of them, close instead
+			if asset.holdings[0].balance != assetTotal {
+				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetID, asset)
+			}
+
+			senderIndex = asset.creator
+			creator := indexToAccount(senderIndex)
+			txn = g.makeAssetDestroyTxn(g.makeTxnHeader(creator, round, intra), asset.assetID)
+
+			// Remove asset by moving the last element to the deleted index then trimming the slice.
+			g.assets[assetID] = g.assets[numAssets-1]
+			g.assets = g.assets[:numAssets-1]
+		case assetOptin:
+			// select a random account from asset to optin
+
+			// If every account holds the asset, close instead of optin
+			if uint64(len(asset.holdings)) == g.numAccounts {
+				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetID, asset)
+			}
+
+			// look for an account that does not hold the asset
+			exists := true
+			for exists {
+				senderIndex = rand.Uint64() % g.numAccounts
+				exists = asset.holders[senderIndex] != nil
+			}
+			account := indexToAccount(senderIndex)
+			txn = g.makeAssetAcceptanceTxn(g.makeTxnHeader(account, round, intra), asset.assetID)
+
+			holding := assetHolding{
+				acctIndex: senderIndex,
+				balance:   0,
+			}
+			asset.holdings = append(asset.holdings, &holding)
+			asset.holders[senderIndex] = &holding
+		case assetXfer:
+			// send from creator (holder[0]) to another random holder (same address is valid)
+
+			// If there aren't enough assets to close one, optin an account instead
+			if len(asset.holdings) == 1 {
+				return g.generateAssetTxnInternalHint(assetOptin, round, intra, assetID, asset)
+			}
+
+			senderIndex = asset.holdings[0].acctIndex
+			sender := indexToAccount(senderIndex)
+
+			receiverArrayIndex := (rand.Uint64() % (uint64(len(asset.holdings)) - uint64(1))) + uint64(1)
+			receiver := indexToAccount(asset.holdings[receiverArrayIndex].acctIndex)
+			amount := uint64(10)
+
+			txn = g.makeAssetTransferTxn(g.makeTxnHeader(sender, round, intra), receiver, amount, basics.Address{}, asset.assetID)
+
+			if asset.holdings[0].balance < amount {
+				fmt.Printf("\n\ncreator doesn't have enough funds for asset %d\n\n", asset.assetID)
+				os.Exit(1)
+			}
+			if g.balances[asset.holdings[0].acctIndex] < g.params.MinTxnFee {
+				fmt.Printf("\n\ncreator doesn't have enough funds for transaction %d\n\n", asset.assetID)
+				os.Exit(1)
+			}
+
+			asset.holdings[0].balance -= amount
+			asset.holdings[receiverArrayIndex].balance += amount
+		case assetClose:
+			// select a holder of a random asset to close out
+			// If there aren't enough assets to close one, optin an account instead
+			if len(asset.holdings) == 1 {
+				return g.generateAssetTxnInternalHint(
+					assetOptin, round, intra, assetID, asset)
+			}
+
+			numHoldings := uint64(len(asset.holdings))
+			closeIndex := (rand.Uint64() % (numHoldings - 1)) + uint64(1)
+			senderIndex = asset.holdings[closeIndex].acctIndex
+			sender := indexToAccount(senderIndex)
+
+			closeToAcctIndex := asset.holdings[0].acctIndex
+			closeToAcct := indexToAccount(closeToAcctIndex)
+
+			txn = g.makeAssetTransferTxn(
+				g.makeTxnHeader(sender, round, intra), closeToAcct, 0, closeToAcct, asset.assetID)
+
+			asset.holdings[0].balance += asset.holdings[closeIndex].balance
+
+			// Remove asset by moving the last element to the deleted index then trimming the slice.
+			asset.holdings[closeIndex] = asset.holdings[numHoldings-1]
+			asset.holdings = asset.holdings[:numHoldings-1]
+			delete(asset.holders, senderIndex)
+		default:
+		}
+	}
+
+	if indexToAccount(senderIndex) != txn.Sender {
+		fmt.Printf("failed to properly set sender index.")
+		os.Exit(1)
+	}
+
+	if g.balances[senderIndex] < txn.Fee.ToUint64() {
+		fmt.Printf("\n\nthe sender account does not have enough algos for the transfer. idx %d, asset transaction type %v, num %d\n\n", senderIndex, actual, g.reportData[actual].GenerationCount)
+		os.Exit(1)
+	}
+
+	if assetID == 0 {
+		fmt.Printf("\n\nassetID is 0 bus should have been set by generateAssetTxnInternalHint()\n\n")
+	}
+
+	g.balances[senderIndex] -= txn.Fee.ToUint64()
+
+	return
+}
+
+// ---- 3. App Transactions ----
+
+func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn, []txn.ApplyData, uint64 /* nextIntra */, uint64 /* appID */, error) {
+	start := time.Now()
+	selection, err := weightedSelection(g.appTxWeights, getAppTxOptions(), appSwapCall)
+	if err != nil {
+		return nil, nil, intra, 0, err
+	}
+
+	actual, signedTxns, appID, err := g.generateAppCallInternal(selection.(TxTypeID), round, intra, 0, nil)
+	if err != nil {
+		return nil, nil, intra, appID, fmt.Errorf("unexpected error received from generateAppCallInternal(): %w", err)
+	}
+
+	if _, ok := effects[actual]; ok {
+		txCount, err := g.recordIncludingEffects(actual, start)
+		intra += txCount
+		if err != nil {
+			return nil, nil, intra, appID, fmt.Errorf("failed to record app transaction %s: %w", actual, err)
+		}
+	} else {
+		g.recordData(actual, start)
+		intra++
+	}
+
+	ads := make([]txn.ApplyData, len(signedTxns))
+	for i := range signedTxns {
+		ads[i] = txn.ApplyData{}
+	}
+
+	return signedTxns, ads, intra, appID, nil
+}
+
+func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintIndex uint64, hintApp *appData) (TxTypeID, []txn.SignedTxn, uint64 /* appID */, error) {
+	var senderIndex uint64
+	if hintApp != nil {
+		senderIndex = hintApp.creator
+	} else {
+		senderIndex = rand.Uint64() % g.numAccounts
+	}
+	senderAcct := indexToAccount(senderIndex)
+
+	actual, kind, appCallType, appID, err := g.getActualAppCall(txType, senderIndex)
+	if err != nil {
+		return "", nil, appID, err
+	}
+	if hintApp != nil && hintApp.appID != 0 {
+		// can only override the appID when non-zero in hintApp
+		appID = hintApp.appID
+	}
+	// WLOG: the matched cases below are now well-defined thanks to getActualAppCall()
+
+	var signedTxns []txn.SignedTxn
+	switch appCallType {
+	case appTxTypeCreate:
+		var approval, clear string
+		if kind == appKindSwap {
+			approval, clear = approvalSwap, clearSwap
+		} else {
+			approval, clear = approvalBoxes, clearBoxes
+		}
+		signedTxns = []txn.SignedTxn{
+			signTxn(g.makeAppCreateTxn(senderAcct, round, intra, approval, clear)),
+		}
+
+		appID = g.txnCounter + intra + 1
+
+		for k := range g.appMap {
+			if g.appMap[k][appID] != nil {
+				return "", nil, appID, fmt.Errorf("should never happen! app %d already exists for kind %s", appID, k)
+			}
+		}
+
+		ad := &appData{
+			appID:   appID,
+			creator: senderIndex,
+			kind:    kind,
+			optins:  map[uint64]bool{},
+		}
+
+		g.pendingAppSlice[kind] = append(g.pendingAppSlice[kind], ad)
+		g.pendingAppMap[kind][appID] = ad
+
+	case appTxTypeOptin:
+		signedTxns = g.makeAppOptinTxn(senderAcct, round, intra, appID)
+		reSignTxns(signedTxns)
+		if g.pendingAppMap[kind][appID] == nil {
+			ad := &appData{
+				appID:  appID,
+				optins: map[uint64]bool{},
+			}
+			g.pendingAppMap[kind][appID] = ad
+			g.pendingAppSlice[kind] = append(g.pendingAppSlice[kind], ad)
+		}
+		g.pendingAppMap[kind][appID].optins[senderIndex] = true
+
+	case appTxTypeCall:
+		signedTxns = []txn.SignedTxn{
+			signTxn(g.makeAppCallTxn(senderAcct, round, intra, appID)),
+		}
+
+	default:
+		return "", nil, appID, fmt.Errorf("unimplemented: invalid transaction type <%s> for app %d", appCallType, appID)
+	}
+
+	// TODO: this fee calculation isn't correct for most app calls:
+	txnFee := g.calculateTxnFee(txType)
+	if g.balances[senderIndex] < txnFee {
+		return "", nil, appID, fmt.Errorf("the sender account does not have enough algos for the app call. idx %d, app transaction type %v, num %d", senderIndex, txType, g.reportData[txType].GenerationCount)
+	}
+	g.balances[senderIndex] -= txnFee
+
+	return actual, signedTxns, appID, nil
+}
+
+func (g *generator) getAppData(existing bool, kind appKind, senderIndex, appID uint64) (*appData, bool /* appInMap */, bool /* senderOptedin */) {
+	appMapOrPendingAppMap := g.pendingAppMap
+	if existing {
+		appMapOrPendingAppMap = g.appMap
+	}
+
+	ad, ok := appMapOrPendingAppMap[kind][appID]
+	if !ok {
+		return nil, false, false
+	}
+	if !ad.optins[senderIndex] {
+		return nil, true, false
+	}
+	return ad, true, true
+}
+
+// getActualAppCall returns the actual transaction type, app kind, app transaction type and appID
+// * it keeps the txType if there aren't any problems (for example create always is kept)
+// * it creates the app if the app of the given kind doesn't exist
+// * it switches to noopoc instead of optin when already opted in in existing apps
+// * it switches to create instead of optin when already opted in in pending apps
+// * it switches to optin when noopoc if not opted in and follows the logic of the optins above
+// * the appID is 0 for creates, and otherwise a randome appID from the existing apps for the kind
+func (g *generator) getActualAppCall(txType TxTypeID, senderIndex uint64) (TxTypeID, appKind, appTxType, uint64 /* appID */, error) {
+	isApp, kind, appTxType, err := parseAppTxType(txType)
+	if err != nil {
+		return "", 0, 0, 0, err
+	}
+	if !isApp {
+		return "", 0, 0, 0, fmt.Errorf("should be an app but not parsed that way: %v", txType)
+	}
+
+	// creates get a quick pass:
+	if appTxType == appTxTypeCreate {
+		return txType, kind, appTxTypeCreate, 0, nil
+	}
+
+	numAppsForKind := uint64(len(g.appSlice[kind]))
+	if numAppsForKind == 0 {
+		// can't do anything else with the app if it doesn't exist, so must create it first!!!
+		return getAppTxType(kind, appTxTypeCreate), kind, appTxTypeCreate, 0, nil
+	}
+
+	// anything else requires an appID
+	// TODO: the appID for appTxTypeCall should ideally be an appID that the sender is opted in to.
+	// We'll want to store a new map: senderIdx --> []map[kind]map[appId]bool
+	appID := g.appSlice[kind][rand.Uint64()%numAppsForKind].appID
+
+	_, exists, optedIn := g.getAppData(true /* existing */, kind, senderIndex, appID)
+	if !exists {
+		return txType, kind, appTxType, appID, fmt.Errorf("should never happen! app %d of kind %s does not exist", appID, kind)
+	}
+	_, _, optedInPending := g.getAppData(false /* pending */, kind, senderIndex, appID)
+
+	switch appTxType {
+	case appTxTypeOptin:
+		if optedIn {
+			// already optedin, so call the app instead:
+			return getAppTxType(kind, appTxTypeCall), kind, appTxTypeCall, appID, nil
+		}
+		if optedInPending {
+			// about to get opted in, but can't optin twice or call yet, so create:
+			return getAppTxType(kind, appTxTypeCreate), kind, appTxTypeCreate, appID, nil
+		}
+	case appTxTypeCall:
+		if !optedIn {
+			if !optedInPending {
+				// not opted in or pending, so optin first:
+				return getAppTxType(kind, appTxTypeOptin), kind, appTxTypeOptin, appID, nil
+			}
+			// optin is pending, so create instead:
+			return getAppTxType(kind, appTxTypeCreate), kind, appTxTypeCreate, appID, nil
+		}
+	default: // appTxTypeCreate, appTxTypeUpdate, appTxTypeDelete, appTxTypeClose, appTxTypeClear:
+		return "", 0, 0, 0, fmt.Errorf("unimplemented transaction type for app %s from %s", appTxType, txType)
+	}
+	// got here? do what was originally asked for:
+	return txType, kind, appTxType, appID, nil
+}
+
+func (g *generator) calculateTxnFee(txType TxTypeID) uint64 {
+	// TODO: this isn't correct for general app calls. It should depend on
+	// the `effects` map.
+	return g.params.MinTxnFee
+}
+
+// ---- metric data recorders ----
+
+func track(id TxTypeID) (TxTypeID, time.Time) {
+	return id, time.Now()
+}
+
+func (g *generator) recordData(id TxTypeID, start time.Time) {
+	g.recordOccurrences(id, 1, start)
+}
+
+func (g *generator) recordOccurrences(id TxTypeID, count uint64, start time.Time) {
+	g.latestData[id]++
+	data := g.reportData[id]
+	data.GenerationCount += count
+	data.GenerationTime += time.Since(start)
+	g.reportData[id] = data
+}
+
+func (g *generator) recordIncludingEffects(id TxTypeID, start time.Time) (uint64, error) {
+	g.recordData(id, start) // this may be a bug!!!
+	count := uint64(1)
+	if consequences, ok := effects[id]; ok {
+		for _, effect := range consequences {
+			count += effect.count
+			g.recordOccurrences(effect.txType, effect.count, start)
+		}
+		return count, nil
+	}
+	return 1, fmt.Errorf("no effects for TxTypeId %v", id)
+}
+
+// ---- miscellaneous ----
+
+func (g *generator) txnForRound(round uint64) uint64 {
+	// There are no transactions in the 0th round
+	if round == 0 {
+		return 0
+	}
+	return g.config.TxnPerBlock
+}
+
+// finishRound tells the generator it can apply any pending state.
+func (g *generator) finishRound(txnCount uint64) {
+	// g.txnCounter += txnCount
+	latestHeader, err := g.ledger.BlockHdr(basics.Round(g.round))
+	if err != nil {
+		panic(fmt.Sprintf("\n\nCould not obtain block header for round %d: %v\n\n", g.round, err))
+	}
+	g.txnCounter = latestHeader.TxnCounter
+	g.timestamp += consensusTimeMilli
+	g.round++
+
+	// Apply pending assets...
+	g.assets = append(g.assets, g.pendingAssets...)
+	g.pendingAssets = nil
+
+	// TODO: temporarily, the below logic is happening in ledgerAddBlock()
+	// for kind, pendingAppSlice := range g.pendingAppSlice {
+	// 	for _, pendingApp := range pendingAppSlice {
+	// 		appID := pendingApp.appID
+	// 		if g.appMap[kind][appID] == nil {
+	// 			g.appSlice[kind] = append(g.appSlice[kind], pendingApp)
+	// 			g.appMap[kind][appID] = pendingApp
+	// 		} else { // just union the optins when already exists
+	// 			for sender := range pendingApp.optins {
+	// 				g.appMap[kind][appID].optins[sender] = true
+	// 			}
+	// 		}
+	// 	}
+	// }
+	// g.resetPendingApps()
+	g.latestPaysetWithExpectedID = nil
+	g.latestData = make(map[TxTypeID]uint64)
+}
+
+func signTxn(transaction txn.Transaction) txn.SignedTxn {
+	stxn := txn.SignedTxn{
+		Msig:     crypto.MultisigSig{},
+		Lsig:     txn.LogicSig{},
+		Txn:      transaction,
+		AuthAddr: basics.Address{},
+	}
+
+	addSignature(&stxn)
+
+	return stxn
+}
+
+func addSignature(stxn *txn.SignedTxn) {
+	stxn.Sig = crypto.Signature{}
+	// TODO: Would it be useful to generate a random signature?
+	stxn.Sig[32] = 50
+}
+
+func reSignTxns(signedTxns []txn.SignedTxn) {
+	for i := range signedTxns {
+		addSignature(&signedTxns[i])
+	}
+}
+
+// TEMPORARY
+
+func (g *generator) ledgerAddBlock(intra uint64, blk bookkeeping.Block, cert agreement.Certificate) error {
+	l := g.ledger
+	// passing nil as the executionPool is ok since we've asking the evaluator to skip verification.
+	updates, err := eval.Eval(context.Background(), l, blk, false, l.VerifiedTransactionCache(), nil, l.GetTracer())
+	if err != nil {
+		if errNSBE, ok := err.(ledgercore.ErrNonSequentialBlockEval); ok && errNSBE.EvaluatorRound <= errNSBE.LatestRound {
+			return ledgercore.BlockInLedgerError{
+				LastRound: errNSBE.EvaluatorRound,
+				NextRound: errNSBE.LatestRound + 1}
+		}
+		return err
+	}
+	vb := ledgercore.MakeValidatedBlock(blk, updates)
+
+	round := blk.Round()
+	appResources := updates.Accts.AppResources
+	boxes := updates.KvMods
+
+	fmt.Print("--------------------\n")
+	fmt.Printf("round: %d\n", round)
+	fmt.Printf("g.txnCounter + intra: %d\n", g.txnCounter+intra)
+	fmt.Printf("blk.BlockHeader.TxnCounter: %d\n", blk.BlockHeader.TxnCounter)
+	fmt.Printf("g.latestData: %+v\n", g.latestData)
+	fmt.Print("--------------------\n")
+	// for _, appRes := range appResources {
+	// 	fmt.Printf("appRes: %+v\n", appRes)
+	// }
+	_ = appResources
+
+	boxEvidenceCount := 0
+	boxEvidence := make(map[uint64][]uint64)
+	for k := range boxes {
+		appID, nameIEsender, _ := apps.SplitBoxKey(k)
+		boxEvidence[appID] = append(boxEvidence[appID], binary.LittleEndian.Uint64([]byte(nameIEsender))-1)
+		boxEvidenceCount++
+	}
+
+	creatableAppsEvidence := make(map[uint64]uint64)
+	for creatableID, creatable := range updates.Creatables {
+		if creatable.Ctype == basics.AppCreatable {
+			creatableAppsEvidence[uint64(creatableID)] = accountToIndex(creatable.Creator)
+		}
+	}
+	// fmt.Printf("boxEvidence: %+v\n", boxEvidence)
+	// fmt.Printf("creatableEvidence: %+v\n", creatableEvidence)
+	fmt.Printf("boxEvidenceCount: %d\n", boxEvidenceCount)
+	fmt.Printf("creatableEvidence: %d\n", len(creatableAppsEvidence))
+
+	expectedCreated := map[appKind]map[uint64]uint64{
+		appKindBoxes: make(map[uint64]uint64),
+		appKindSwap:  make(map[uint64]uint64),
+	}
+	expectedOptins := map[appKind]map[uint64]map[uint64]bool{
+		appKindBoxes: make(map[uint64]map[uint64]bool),
+		appKindSwap:  make(map[uint64]map[uint64]bool),
+	}
+
+	expectedOptinsCount := 0
+	for kind, appMap := range g.pendingAppMap {
+		for appID, ad := range appMap {
+			if len(ad.optins) > 0 {
+				expectedOptins[kind][appID] = ad.optins
+				expectedOptinsCount += len(ad.optins)
+			} else {
+				expectedCreated[kind][appID] = ad.creator
+			}
+		}
+	}
+
+	// fmt.Printf("expectedCreated: %+v\n", expectedCreated)
+	// fmt.Printf("expectedOptins: %+v\n", expectedOptins)
+	fmt.Printf("expectedCreatedCount: %d\n", len(expectedCreated[appKindBoxes]))
+	fmt.Printf("expectedOptinsCount: %d\n", expectedOptinsCount)
+
+	creatablesUnexpected := map[uint64]uint64{}
+	for creatableID, creator := range creatableAppsEvidence {
+		if expectedCreated[appKindSwap][creatableID] != creator && expectedCreated[appKindBoxes][creatableID] != creator {
+			creatablesUnexpected[creatableID] = creator
+		}
+	}
+	fmt.Printf("creatablesUnexpected: %+v\n", creatablesUnexpected)
+
+	expectedCreatedNotFound := map[uint64]uint64{}
+	for creatableID, creator := range expectedCreated[appKindBoxes] {
+		if creatableAppsEvidence[creatableID] != creator {
+			expectedCreatedNotFound[creatableID] = creator
+		}
+	}
+	fmt.Printf("expectedCreatedNotFound: %+v\n", expectedCreatedNotFound)
+
+	boxOptinsUnexpected := map[uint64][]uint64{}
+	for appId, boxOptins := range boxEvidence {
+		for _, optin := range boxOptins {
+			if _, ok := expectedOptins[appKindBoxes][appId][optin]; !ok {
+				boxOptinsUnexpected[appId] = append(boxOptinsUnexpected[appId], optin)
+			}
+		}
+	}
+	fmt.Printf("boxOptinsUnexpected: %+v\n", boxOptinsUnexpected)
+
+	expectedOptinsNotFound := map[uint64][]uint64{}
+	for appId, appOptins := range expectedOptins[appKindBoxes] {
+		for optin := range appOptins {
+			missing := true
+			for _, boxOptin := range boxEvidence[appId] {
+				if boxOptin == optin {
+					missing = false
+					break
+				}
+			}
+			if missing {
+				expectedOptinsNotFound[appId] = append(expectedOptinsNotFound[appId], optin)
+			}
+		}
+	}
+	fmt.Printf("expectedOptinsNotFound: %+v\n", expectedOptinsNotFound)
+
+	// clear the pending here instead of in finishRound
+	for kind, pendingAppSlice := range g.pendingAppSlice {
+		for _, pendingApp := range pendingAppSlice {
+			appID := pendingApp.appID
+			if g.appMap[kind][appID] == nil {
+				g.appSlice[kind] = append(g.appSlice[kind], pendingApp)
+				g.appMap[kind][appID] = pendingApp
+			} else { // just union the optins when already exists
+				for sender := range pendingApp.optins {
+					g.appMap[kind][appID].optins[sender] = true
+				}
+			}
+		}
+	}
+	g.resetPendingApps()
+
+	return l.AddValidatedBlock(vb, cert)
 }
