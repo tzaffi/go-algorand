@@ -24,6 +24,7 @@ import (
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/data/basics"
 	"github.com/algorand/go-algorand/data/bookkeeping"
+	txn "github.com/algorand/go-algorand/data/transactions"
 	"github.com/algorand/go-algorand/ledger"
 	"github.com/algorand/go-algorand/protocol"
 )
@@ -104,12 +105,17 @@ type generator struct {
 
 	// Reporting information from transaction type to data
 	reportData Report
+	latestData map[TxTypeID]uint64
 
 	// ledger
 	ledger *ledger.Ledger
 
-	// cache the latest written block
+	// latestBlockMsgp caches the latest written block
 	latestBlockMsgp []byte
+
+	// latestPaysetWithExpectedID provides the ordered payest transactions
+	// together the expected asset/app IDs (or 0 if not applicable)
+	latestPaysetWithExpectedID []txnWithExpectedID
 
 	roundOffset uint64
 }
@@ -148,4 +154,13 @@ type TxData struct {
 type TxEffect struct {
 	txType TxTypeID
 	count  uint64
+}
+
+// txnWithExpectedID rolls up an expected asset/app ID for non-pay txns
+// together with a signedTxn expected to be in the payset.
+type txnWithExpectedID struct {
+	expectedID uint64
+	signedTxn  *txn.SignedTxn
+	intra      uint64
+	nextIntra  uint64
 }

@@ -31,7 +31,6 @@ clean:
 block-generator: clean
 	go build
 
-
 run-runner: block-generator
 	./block-generator runner --conduit-binary ./conduit \
 	--log-level trace \

@@ -71,7 +71,8 @@ func init() {
 	effects = map[TxTypeID][]TxEffect{
 		appBoxesOptin: {
 			{effectPaymentTxSibling, 1},
-			{effectInnerTx, 2},
+			// EXPERIMENT: ONLY COUNT SIBLING TRANSACTIONS!!!!
+			// {effectInnerTx, 2},
 		},
 	}
 }
@@ -101,6 +102,7 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 		rewardsRate:               0,
 		rewardsRecalculationRound: 0,
 		reportData:                make(map[TxTypeID]TxData),
+		latestData:                make(map[TxTypeID]uint64),
 		roundOffset:               dbround,
 	}
 
@@ -576,24 +578,58 @@ func getAppTxOptions() []interface{} {
 // ---- Transaction Generation (Pay/Asset/Apps) ----
 
 func (g *generator) generateSignedTxns(round uint64, intra uint64) ([]txn.SignedTxn, []txn.ApplyData, uint64 /* nextIntra */, error) {
+	// TODO: return the number of transactions generated instead of updating intra!!!
 	selection, err := weightedSelection(g.transactionWeights, getTransactionOptions(), paymentTx)
 	if err != nil {
 		return nil, nil, intra, err
 	}
 
+	var signedTxns []txn.SignedTxn
+	var ads []txn.ApplyData
+	var nextIntra uint64
+	var expectedID uint64
 	switch selection {
 	case paymentTx:
-		signedTxn, ad, nextIntra, err := g.generatePaymentTxn(round, intra)
-		return []txn.SignedTxn{signedTxn}, []txn.ApplyData{ad}, nextIntra, err
+		var signedTxn txn.SignedTxn
+		var ad txn.ApplyData
+		signedTxn, ad, nextIntra, err = g.generatePaymentTxn(round, intra)
+		signedTxns = []txn.SignedTxn{signedTxn}
+		ads = []txn.ApplyData{ad}
+		// return []txn.SignedTxn{signedTxn}, []txn.ApplyData{ad}, nextIntra, err
 	case assetTx:
-		signedTxn, ad, nextIntra, err := g.generateAssetTxn(round, intra)
-		return []txn.SignedTxn{signedTxn}, []txn.ApplyData{ad}, nextIntra, err
+		var signedTxn txn.SignedTxn
+		var ad txn.ApplyData
+		signedTxn, ad, nextIntra, expectedID, err = g.generateAssetTxn(round, intra)
+		signedTxns = []txn.SignedTxn{signedTxn}
+		ads = []txn.ApplyData{ad}
+		// return []txn.SignedTxn{signedTxn}, []txn.ApplyData{ad}, nextIntra, err
 	case applicationTx:
-		signedTxns, ads, nextIntra, err := g.generateAppTxn(round, intra)
-		return signedTxns, ads, nextIntra, err
+		signedTxns, ads, nextIntra, expectedID, err = g.generateAppTxn(round, intra)
+		// return signedTxns, ads, nextIntra, err
 	default:
 		return nil, nil, intra, fmt.Errorf("no generator available for %s", selection)
 	}
+
+	if err != nil {
+		return nil, nil, intra, fmt.Errorf("error generating transaction: %w", err)
+	}
+
+	if len(signedTxns) == 0 {
+		return nil, nil, intra, fmt.Errorf("no transactions generated")
+	}
+
+	for i := range signedTxns {
+		g.latestPaysetWithExpectedID = append(
+			g.latestPaysetWithExpectedID,
+			txnWithExpectedID{
+				expectedID: expectedID,
+				signedTxn:  &signedTxns[i],
+				intra:      intra,
+				nextIntra:  nextIntra,
+			},
+		)
+	}
+	return signedTxns, ads, nextIntra, nil
 }
 
 // ---- 1. Pay Transactions ----
@@ -651,14 +687,14 @@ func (g *generator) generatePaymentTxnInternal(selection TxTypeID, round uint64,
 
 // ---- 2. Asset Transactions ----
 
-func (g *generator) generateAssetTxn(round uint64, intra uint64) (txn.SignedTxn, txn.ApplyData, uint64 /* nextIntra */, error) {
+func (g *generator) generateAssetTxn(round uint64, intra uint64) (txn.SignedTxn, txn.ApplyData, uint64 /* nextIntra */, uint64 /* assetID */, error) {
 	start := time.Now()
 	selection, err := weightedSelection(g.assetTxWeights, getAssetTxOptions(), assetXfer)
 	if err != nil {
-		return txn.SignedTxn{}, txn.ApplyData{}, intra, err
+		return txn.SignedTxn{}, txn.ApplyData{}, intra, 0, err
 	}
 
-	actual, transaction := g.generateAssetTxnInternal(selection.(TxTypeID), round, intra)
+	actual, transaction, assetID := g.generateAssetTxnInternal(selection.(TxTypeID), round, intra)
 	defer g.recordData(actual, start)
 
 	// TODO: shouldn't we just return an error?
@@ -667,14 +703,14 @@ func (g *generator) generateAssetTxn(round uint64, intra uint64) (txn.SignedTxn,
 		os.Exit(1)
 	}
 
-	return signTxn(transaction), txn.ApplyData{}, intra + 1, nil
+	return signTxn(transaction), txn.ApplyData{}, intra + 1, assetID, nil
 }
 
-func (g *generator) generateAssetTxnInternal(txType TxTypeID, round uint64, intra uint64) (actual TxTypeID, txn txn.Transaction) {
+func (g *generator) generateAssetTxnInternal(txType TxTypeID, round uint64, intra uint64) (actual TxTypeID, txn txn.Transaction, assetID uint64) {
 	return g.generateAssetTxnInternalHint(txType, round, intra, 0, nil)
 }
 
-func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, intra uint64, hintIndex uint64, hint *assetData) (actual TxTypeID, txn txn.Transaction) {
+func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, intra uint64, hintIndex uint64, hint *assetData) (actual TxTypeID, txn txn.Transaction, assetID uint64) {
 	actual = txType
 	// If there are no assets the next operation needs to be a create.
 	numAssets := uint64(len(g.assets))
@@ -689,7 +725,7 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 		senderAcct := indexToAccount(senderIndex)
 
 		total := assetTotal
-		assetID := g.txnCounter + intra + 1
+		assetID = g.txnCounter + intra + 1
 		assetName := fmt.Sprintf("asset #%d", assetID)
 		txn = g.makeAssetCreateTxn(g.makeTxnHeader(senderAcct, round, intra), total, false, assetName)
 		// Compute asset ID and initialize holdings
@@ -707,14 +743,14 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 
 		g.pendingAssets = append(g.pendingAssets, &a)
 	} else {
-		var assetIndex uint64
+		// var assetIndex uint64
 		var asset *assetData
 		if hint != nil {
-			assetIndex = hintIndex
+			assetID = hintIndex
 			asset = hint
 		} else {
-			assetIndex = rand.Uint64() % numAssets
-			asset = g.assets[assetIndex]
+			assetID = rand.Uint64() % numAssets
+			asset = g.assets[assetID]
 		}
 
 		switch actual {
@@ -723,7 +759,7 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 
 			// If the creator doesn't have all of them, close instead
 			if asset.holdings[0].balance != assetTotal {
-				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetIndex, asset)
+				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetID, asset)
 			}
 
 			senderIndex = asset.creator
@@ -731,14 +767,14 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 			txn = g.makeAssetDestroyTxn(g.makeTxnHeader(creator, round, intra), asset.assetID)
 
 			// Remove asset by moving the last element to the deleted index then trimming the slice.
-			g.assets[assetIndex] = g.assets[numAssets-1]
+			g.assets[assetID] = g.assets[numAssets-1]
 			g.assets = g.assets[:numAssets-1]
 		case assetOptin:
 			// select a random account from asset to optin
 
 			// If every account holds the asset, close instead of optin
 			if uint64(len(asset.holdings)) == g.numAccounts {
-				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetIndex, asset)
+				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetID, asset)
 			}
 
 			// look for an account that does not hold the asset
@@ -761,7 +797,7 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 
 			// If there aren't enough assets to close one, optin an account instead
 			if len(asset.holdings) == 1 {
-				return g.generateAssetTxnInternalHint(assetOptin, round, intra, assetIndex, asset)
+				return g.generateAssetTxnInternalHint(assetOptin, round, intra, assetID, asset)
 			}
 
 			senderIndex = asset.holdings[0].acctIndex
@@ -789,7 +825,7 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 			// If there aren't enough assets to close one, optin an account instead
 			if len(asset.holdings) == 1 {
 				return g.generateAssetTxnInternalHint(
-					assetOptin, round, intra, assetIndex, asset)
+					assetOptin, round, intra, assetID, asset)
 			}
 
 			numHoldings := uint64(len(asset.holdings))
@@ -822,29 +858,35 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 		fmt.Printf("\n\nthe sender account does not have enough algos for the transfer. idx %d, asset transaction type %v, num %d\n\n", senderIndex, actual, g.reportData[actual].GenerationCount)
 		os.Exit(1)
 	}
+
+	if assetID == 0 {
+		fmt.Printf("\n\nassetID is 0 bus should have been set by generateAssetTxnInternalHint()\n\n")
+	}
+
 	g.balances[senderIndex] -= txn.Fee.ToUint64()
+
 	return
 }
 
 // ---- 3. App Transactions ----
 
-func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn, []txn.ApplyData, uint64 /* nextIntra */, error) {
+func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn, []txn.ApplyData, uint64 /* nextIntra */, uint64 /* appID */, error) {
 	start := time.Now()
 	selection, err := weightedSelection(g.appTxWeights, getAppTxOptions(), appSwapCall)
 	if err != nil {
-		return nil, nil, intra, err
+		return nil, nil, intra, 0, err
 	}
 
-	actual, signedTxns, err := g.generateAppCallInternal(selection.(TxTypeID), round, intra, 0, nil)
+	actual, signedTxns, appID, err := g.generateAppCallInternal(selection.(TxTypeID), round, intra, 0, nil)
 	if err != nil {
-		return nil, nil, intra, fmt.Errorf("unexpected error received from generateAppCallInternal(): %w", err)
+		return nil, nil, intra, appID, fmt.Errorf("unexpected error received from generateAppCallInternal(): %w", err)
 	}
 
 	if _, ok := effects[actual]; ok {
 		txCount, err := g.recordIncludingEffects(actual, start)
 		intra += txCount
 		if err != nil {
-			return nil, nil, intra, fmt.Errorf("failed to record app transaction %s: %w", actual, err)
+			return nil, nil, intra, appID, fmt.Errorf("failed to record app transaction %s: %w", actual, err)
 		}
 	} else {
 		g.recordData(actual, start)
@@ -856,10 +898,10 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn,
 		ads[i] = txn.ApplyData{}
 	}
 
-	return signedTxns, ads, intra, nil
+	return signedTxns, ads, intra, appID, nil
 }
 
-func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintIndex uint64, hintApp *appData) (TxTypeID, []txn.SignedTxn, error) {
+func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintIndex uint64, hintApp *appData) (TxTypeID, []txn.SignedTxn, uint64 /* appID */, error) {
 	var senderIndex uint64
 	if hintApp != nil {
 		senderIndex = hintApp.creator
@@ -870,10 +912,10 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 
 	actual, kind, appCallType, appID, err := g.getActualAppCall(txType, senderIndex)
 	if err != nil {
-		return "", nil, err
+		return "", nil, appID, err
 	}
 	if hintApp != nil && hintApp.appID != 0 {
-		// can only override the appID when non-zero
+		// can only override the appID when non-zero in hintApp
 		appID = hintApp.appID
 	}
 	// WLOG: the matched cases below are now well-defined thanks to getActualAppCall()
@@ -887,7 +929,6 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 		} else {
 			approval, clear = approvalBoxes, clearBoxes
 		}
-
 		signedTxns = []txn.SignedTxn{
 			signTxn(g.makeAppCreateTxn(senderAcct, round, intra, approval, clear)),
 		}
@@ -896,7 +937,7 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 
 		for k := range g.appMap {
 			if g.appMap[k][appID] != nil {
-				return "", nil, fmt.Errorf("should never happen! app %d already exists for kind %s", appID, k)
+				return "", nil, appID, fmt.Errorf("should never happen! app %d already exists for kind %s", appID, k)
 			}
 		}
 
@@ -929,26 +970,26 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 		}
 
 	default:
-		return "", nil, fmt.Errorf("unimplemented: invalid transaction type <%s> for app %d", appCallType, appID)
+		return "", nil, appID, fmt.Errorf("unimplemented: invalid transaction type <%s> for app %d", appCallType, appID)
 	}
 
 	// TODO: this fee calculation isn't correct for most app calls:
 	txnFee := g.calculateTxnFee(txType)
 	if g.balances[senderIndex] < txnFee {
-		return "", nil, fmt.Errorf("the sender account does not have enough algos for the app call. idx %d, app transaction type %v, num %d", senderIndex, txType, g.reportData[txType].GenerationCount)
+		return "", nil, appID, fmt.Errorf("the sender account does not have enough algos for the app call. idx %d, app transaction type %v, num %d", senderIndex, txType, g.reportData[txType].GenerationCount)
 	}
 	g.balances[senderIndex] -= txnFee
 
-	return actual, signedTxns, nil
+	return actual, signedTxns, appID, nil
 }
 
-func (g *generator) getAppData(existing bool, kind appKind, senderIndex, appID uint64) (*appData, bool /* appExists */, bool /* optedIn */) {
-	amap := g.pendingAppMap
+func (g *generator) getAppData(existing bool, kind appKind, senderIndex, appID uint64) (*appData, bool /* appInMap */, bool /* senderOptedin */) {
+	appMapOrPendingAppMap := g.pendingAppMap
 	if existing {
-		amap = g.appMap
+		appMapOrPendingAppMap = g.appMap
 	}
 
-	ad, ok := amap[kind][appID]
+	ad, ok := appMapOrPendingAppMap[kind][appID]
 	if !ok {
 		return nil, false, false
 	}
@@ -966,7 +1007,7 @@ func (g *generator) getAppData(existing bool, kind appKind, senderIndex, appID u
 // * it switches to optin when noopoc if not opted in and follows the logic of the optins above
 // * the appID is 0 for creates, and otherwise a randome appID from the existing apps for the kind
 func (g *generator) getActualAppCall(txType TxTypeID, senderIndex uint64) (TxTypeID, appKind, appTxType, uint64 /* appID */, error) {
-	isApp, kind, appCallType, err := parseAppTxType(txType)
+	isApp, kind, appTxType, err := parseAppTxType(txType)
 	if err != nil {
 		return "", 0, 0, 0, err
 	}
@@ -975,7 +1016,7 @@ func (g *generator) getActualAppCall(txType TxTypeID, senderIndex uint64) (TxTyp
 	}
 
 	// creates get a quick pass:
-	if appCallType == appTxTypeCreate {
+	if appTxType == appTxTypeCreate {
 		return txType, kind, appTxTypeCreate, 0, nil
 	}
 
@@ -986,35 +1027,40 @@ func (g *generator) getActualAppCall(txType TxTypeID, senderIndex uint64) (TxTyp
 	}
 
 	// anything else requires an appID
-	rndIdx := rand.Uint64() % numAppsForKind
-	appID := g.appSlice[kind][rndIdx].appID
+	// TODO: the appID for appTxTypeCall should ideally be an appID that the sender is opted in to.
+	// We'll want to store a new map: senderIdx --> []map[kind]map[appId]bool
+	appID := g.appSlice[kind][rand.Uint64()%numAppsForKind].appID
 
 	_, exists, optedIn := g.getAppData(true /* existing */, kind, senderIndex, appID)
 	if !exists {
-		return txType, kind, appCallType, appID, fmt.Errorf("should never happen! app %d of kind %s does not exist", appID, kind)
+		return txType, kind, appTxType, appID, fmt.Errorf("should never happen! app %d of kind %s does not exist", appID, kind)
 	}
 	_, _, optedInPending := g.getAppData(false /* pending */, kind, senderIndex, appID)
 
-	switch appCallType {
+	switch appTxType {
 	case appTxTypeOptin:
 		if optedIn {
+			// already optedin, so call the app instead:
 			return getAppTxType(kind, appTxTypeCall), kind, appTxTypeCall, appID, nil
 		}
 		if optedInPending {
+			// about to get opted in, but can't optin twice or call yet, so create:
 			return getAppTxType(kind, appTxTypeCreate), kind, appTxTypeCreate, appID, nil
 		}
 	case appTxTypeCall:
 		if !optedIn {
 			if !optedInPending {
+				// not opted in or pending, so optin first:
 				return getAppTxType(kind, appTxTypeOptin), kind, appTxTypeOptin, appID, nil
 			}
+			// optin is pending, so create instead:
 			return getAppTxType(kind, appTxTypeCreate), kind, appTxTypeCreate, appID, nil
 		}
 	default: // appTxTypeCreate, appTxTypeUpdate, appTxTypeDelete, appTxTypeClose, appTxTypeClear:
-		return "", 0, 0, 0, fmt.Errorf("unimplemented transaction type for app %s from %s", appCallType, txType)
+		return "", 0, 0, 0, fmt.Errorf("unimplemented transaction type for app %s from %s", appTxType, txType)
 	}
-	// got here? do what was asked for
-	return txType, kind, appCallType, appID, nil
+	// got here? do what was originally asked for:
+	return txType, kind, appTxType, appID, nil
 }
 
 func (g *generator) calculateTxnFee(txType TxTypeID) uint64 {
@@ -1034,6 +1080,7 @@ func (g *generator) recordData(id TxTypeID, start time.Time) {
 }
 
 func (g *generator) recordOccurrences(id TxTypeID, count uint64, start time.Time) {
+	g.latestData[id]++
 	data := g.reportData[id]
 	data.GenerationCount += count
 	data.GenerationTime += time.Since(start)
@@ -1065,7 +1112,12 @@ func (g *generator) txnForRound(round uint64) uint64 {
 
 // finishRound tells the generator it can apply any pending state.
 func (g *generator) finishRound(txnCount uint64) {
-	g.txnCounter += txnCount
+	// g.txnCounter += txnCount
+	latestHeader, err := g.ledger.BlockHdr(basics.Round(g.round))
+	if err != nil {
+		panic(fmt.Sprintf("\n\nCould not obtain block header for round %d: %v\n\n", g.round, err))
+	}
+	g.txnCounter = latestHeader.TxnCounter
 	g.timestamp += consensusTimeMilli
 	g.round++
 
@@ -1073,20 +1125,23 @@ func (g *generator) finishRound(txnCount uint64) {
 	g.assets = append(g.assets, g.pendingAssets...)
 	g.pendingAssets = nil
 
-	for kind, pendingAppSlice := range g.pendingAppSlice {
-		for _, pendingApp := range pendingAppSlice {
-			appID := pendingApp.appID
-			if g.appMap[kind][appID] == nil {
-				g.appSlice[kind] = append(g.appSlice[kind], pendingApp)
-				g.appMap[kind][appID] = pendingApp
-			} else { // just union the optins when already exists
-				for sender := range pendingApp.optins {
-					g.appMap[kind][appID].optins[sender] = true
-				}
-			}
-		}
-	}
-	g.resetPendingApps()
+	// TODO: temporarily, the below logic is happening in ledgerAddBlock()
+	// for kind, pendingAppSlice := range g.pendingAppSlice {
+	// 	for _, pendingApp := range pendingAppSlice {
+	// 		appID := pendingApp.appID
+	// 		if g.appMap[kind][appID] == nil {
+	// 			g.appSlice[kind] = append(g.appSlice[kind], pendingApp)
+	// 			g.appMap[kind][appID] = pendingApp
+	// 		} else { // just union the optins when already exists
+	// 			for sender := range pendingApp.optins {
+	// 				g.appMap[kind][appID].optins[sender] = true
+	// 			}
+	// 		}
+	// 	}
+	// }
+	// g.resetPendingApps()
+	g.latestPaysetWithExpectedID = nil
+	g.latestData = make(map[TxTypeID]uint64)
 }
 
 func signTxn(transaction txn.Transaction) txn.SignedTxn {
@@ -1128,31 +1183,111 @@ func (g *generator) ledgerAddBlock(intra uint64, blk bookkeeping.Block, cert agr
 		}
 		return err
 	}
+	vb := ledgercore.MakeValidatedBlock(blk, updates)
+
 	round := blk.Round()
 	appResources := updates.Accts.AppResources
 	boxes := updates.KvMods
 
+	fmt.Print("--------------------\n")
 	fmt.Printf("round: %d\n", round)
+	fmt.Printf("g.txnCounter + intra: %d\n", g.txnCounter+intra)
+	fmt.Printf("blk.BlockHeader.TxnCounter: %d\n", blk.BlockHeader.TxnCounter)
+	fmt.Printf("g.latestData: %+v\n", g.latestData)
+	fmt.Print("--------------------\n")
 	// for _, appRes := range appResources {
 	// 	fmt.Printf("appRes: %+v\n", appRes)
 	// }
 	_ = appResources
 
+	boxEvidenceCount := 0
 	boxEvidence := make(map[uint64][]uint64)
 	for k := range boxes {
-		appID, name, _ := apps.SplitBoxKey(k)
-		boxEvidence[appID] = append(boxEvidence[appID], binary.LittleEndian.Uint64([]byte(name))-1)
+		appID, nameIEsender, _ := apps.SplitBoxKey(k)
+		boxEvidence[appID] = append(boxEvidence[appID], binary.LittleEndian.Uint64([]byte(nameIEsender))-1)
+		boxEvidenceCount++
 	}
-	fmt.Printf("boxEvidence: %+v\n", boxEvidence)
 
-	genEvidence := map[appKind]map[uint64]map[uint64]bool{
+	creatableAppsEvidence := make(map[uint64]uint64)
+	for creatableID, creatable := range updates.Creatables {
+		if creatable.Ctype == basics.AppCreatable {
+			creatableAppsEvidence[uint64(creatableID)] = accountToIndex(creatable.Creator)
+		}
+	}
+	// fmt.Printf("boxEvidence: %+v\n", boxEvidence)
+	// fmt.Printf("creatableEvidence: %+v\n", creatableEvidence)
+	fmt.Printf("boxEvidenceCount: %d\n", boxEvidenceCount)
+	fmt.Printf("creatableEvidence: %d\n", len(creatableAppsEvidence))
+
+	expectedCreated := map[appKind]map[uint64]uint64{
+		appKindBoxes: make(map[uint64]uint64),
+		appKindSwap:  make(map[uint64]uint64),
+	}
+	expectedOptins := map[appKind]map[uint64]map[uint64]bool{
 		appKindBoxes: make(map[uint64]map[uint64]bool),
 		appKindSwap:  make(map[uint64]map[uint64]bool),
 	}
-	filteredEvidence := map[appKind]map[uint64]map[uint64]bool{
-		appKindBoxes: make(map[uint64]map[uint64]bool),
-		appKindSwap:  make(map[uint64]map[uint64]bool),
+
+	expectedOptinsCount := 0
+	for kind, appMap := range g.pendingAppMap {
+		for appID, ad := range appMap {
+			if len(ad.optins) > 0 {
+				expectedOptins[kind][appID] = ad.optins
+				expectedOptinsCount += len(ad.optins)
+			} else {
+				expectedCreated[kind][appID] = ad.creator
+			}
+		}
 	}
+
+	// fmt.Printf("expectedCreated: %+v\n", expectedCreated)
+	// fmt.Printf("expectedOptins: %+v\n", expectedOptins)
+	fmt.Printf("expectedCreatedCount: %d\n", len(expectedCreated[appKindBoxes]))
+	fmt.Printf("expectedOptinsCount: %d\n", expectedOptinsCount)
+
+	creatablesUnexpected := map[uint64]uint64{}
+	for creatableID, creator := range creatableAppsEvidence {
+		if expectedCreated[appKindSwap][creatableID] != creator && expectedCreated[appKindBoxes][creatableID] != creator {
+			creatablesUnexpected[creatableID] = creator
+		}
+	}
+	fmt.Printf("creatablesUnexpected: %+v\n", creatablesUnexpected)
+
+	expectedCreatedNotFound := map[uint64]uint64{}
+	for creatableID, creator := range expectedCreated[appKindBoxes] {
+		if creatableAppsEvidence[creatableID] != creator {
+			expectedCreatedNotFound[creatableID] = creator
+		}
+	}
+	fmt.Printf("expectedCreatedNotFound: %+v\n", expectedCreatedNotFound)
+
+	boxOptinsUnexpected := map[uint64][]uint64{}
+	for appId, boxOptins := range boxEvidence {
+		for _, optin := range boxOptins {
+			if _, ok := expectedOptins[appKindBoxes][appId][optin]; !ok {
+				boxOptinsUnexpected[appId] = append(boxOptinsUnexpected[appId], optin)
+			}
+		}
+	}
+	fmt.Printf("boxOptinsUnexpected: %+v\n", boxOptinsUnexpected)
+
+	expectedOptinsNotFound := map[uint64][]uint64{}
+	for appId, appOptins := range expectedOptins[appKindBoxes] {
+		for optin := range appOptins {
+			missing := true
+			for _, boxOptin := range boxEvidence[appId] {
+				if boxOptin == optin {
+					missing = false
+					break
+				}
+			}
+			if missing {
+				expectedOptinsNotFound[appId] = append(expectedOptinsNotFound[appId], optin)
+			}
+		}
+	}
+	fmt.Printf("expectedOptinsNotFound: %+v\n", expectedOptinsNotFound)
+
 	// clear the pending here instead of in finishRound
 	for kind, pendingAppSlice := range g.pendingAppSlice {
 		for _, pendingApp := range pendingAppSlice {
@@ -1168,47 +1303,6 @@ func (g *generator) ledgerAddBlock(intra uint64, blk bookkeeping.Block, cert agr
 		}
 	}
 	g.resetPendingApps()
-	// -- end of finish round copy/pasta
-
-	for kind, appMap := range g.appMap {
-		for appID, ad := range appMap {
-			genEvidence[kind][appID] = ad.optins
-			if len(ad.optins) > 0 {
-				filteredEvidence[kind][appID] = ad.optins
-			}
-		}
-	}
-	// fmt.Printf("genEvidence: %+v\n", genEvidence)
-	fmt.Printf("filteredEvidence: %+v\n", filteredEvidence)
-
-	bMinusF := map[uint64][]uint64{}
-	for appId, boxOptins := range boxEvidence {
-		for _, optin := range boxOptins {
-			if _, ok := filteredEvidence[appKindBoxes][appId][optin]; !ok {
-				bMinusF[appId] = append(bMinusF[appId], optin)
-			}
-		}
-	}
-	fmt.Printf("bMinusF: %+v\n", bMinusF)
-
-	fMinusB := map[uint64][]uint64{}
-	for appId, appOptins := range filteredEvidence[appKindBoxes] {
-		for optin := range appOptins {
-			missing := true
-			for _, boxOptin := range boxEvidence[appId] {
-				if boxOptin == optin {
-					missing = false
-					break
-				}
-			}
-			if missing {
-				fMinusB[appId] = append(fMinusB[appId], optin)
-			}
-		}
-	}
-	fmt.Printf("fMinusB: %+v\n", fMinusB)
-
-	vb := ledgercore.MakeValidatedBlock(blk, updates)
 
 	return l.AddValidatedBlock(vb, cert)
 }
