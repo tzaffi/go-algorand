@@ -379,7 +379,7 @@ func ApplicationCall(ac transactions.ApplicationCallTxnFields, header transactio
 	// Ensure that the only operation we can do is ClearState if the application
 	// does not exist
 	if !exists && ac.OnCompletion != transactions.ClearStateOC {
-		return fmt.Errorf("only ClearState is supported for an application (%d) that does not exist", appIdx)
+		return fmt.Errorf("requested %s but only ClearState is supported for an application (%d) that does not exist", ac.OnCompletion, appIdx)
 	}
 
 	// If this txn is going to set new programs (either for creation or

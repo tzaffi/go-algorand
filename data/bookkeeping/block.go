@@ -773,7 +773,7 @@ func (bh BlockHeader) DecodeSignedTxn(stb transactions.SignedTxnInBlock) (transa
 }
 
 // EncodeSignedTxn converts a SignedTxn and ApplyData into a SignedTxnInBlock
-// for that block.
+// for that block. It also mutates the SignedTxn to remove the GenesisID and GenesisHash fields.
 func (bh BlockHeader) EncodeSignedTxn(st transactions.SignedTxn, ad transactions.ApplyData) (transactions.SignedTxnInBlock, error) {
 	var stb transactions.SignedTxnInBlock
 
