@@ -77,11 +77,13 @@ const (
 
 	// Defaults
 	defaultGenesisAccountsCount         uint64 = 1000
-	defaultGenesisAccountInitialBalance uint64 = 1000000000000
+	defaultGenesisAccountInitialBalance uint64 = 1_000_000_000000 // 1 million algos per account
 
-	assetTotal uint64 = 100000000000000000
+	assetTotal uint64 = 100_000_000_000_000_000 // 100 billion units per asset
 
-	consensusTimeMilli int64  = 3300
+	consensusTimeMilli int64 = 3300
+
+	// TODO: do we still need this as can get it from the Ledger?
 	startingTxnCounter uint64 = 1000
 )
 

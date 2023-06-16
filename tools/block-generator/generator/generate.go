@@ -17,7 +17,6 @@
 package generator
 
 import (
-	"context"
 	_ "embed"
 	"encoding/binary"
 	"encoding/json"
@@ -31,7 +30,6 @@ import (
 	"github.com/algorand/go-algorand/agreement"
 	cconfig "github.com/algorand/go-algorand/config"
 	"github.com/algorand/go-algorand/ledger"
-	"github.com/algorand/go-algorand/ledger/eval"
 	"github.com/algorand/go-algorand/ledger/ledgercore"
 	"github.com/algorand/go-algorand/logging"
 	"github.com/algorand/go-algorand/protocol"
@@ -69,10 +67,12 @@ var effects map[TxTypeID][]TxEffect
 
 func init() {
 	effects = map[TxTypeID][]TxEffect{
+		appBoxesCreate: {
+			{effectPaymentTxSibling, 1},
+		},
 		appBoxesOptin: {
 			{effectPaymentTxSibling, 1},
-			// EXPERIMENT: ONLY COUNT SIBLING TRANSACTIONS!!!!
-			// {effectInnerTx, 2},
+			{effectInnerTx, 2},
 		},
 	}
 }
@@ -87,6 +87,7 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 
 	var proto protocol.ConsensusVersion = "future"
 	gen := &generator{
+		verbose:                   true,
 		config:                    config,
 		protocol:                  proto,
 		params:                    cconfig.Consensus[proto],
@@ -124,6 +125,10 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 	gen.appMap = map[appKind]map[uint64]*appData{
 		appKindBoxes: make(map[uint64]*appData),
 		appKindSwap:  make(map[uint64]*appData),
+	}
+	gen.accountAppOptins = map[appKind]map[uint64][]uint64{
+		appKindBoxes: make(map[uint64][]uint64),
+		appKindSwap:  make(map[uint64][]uint64),
 	}
 
 	gen.initializeAccounting()
@@ -430,10 +435,15 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 		cert.Block.Payset = transactions
 		cert.Certificate = agreement.Certificate{} // empty certificate for clarity
 
-		// err := g.ledger.AddBlock(cert.Block, cert.Certificate)
-		err := g.ledgerAddBlock(intra, cert.Block, cert.Certificate)
+		err := g.ledger.AddBlock(cert.Block, cert.Certificate)
 		if err != nil {
 			return err
+		}
+		if g.verbose {
+			err := g.introspectLedgerVsGenerator(round, intra)
+			if err != nil {
+				return fmt.Errorf("introspecting ledger resulted in an error: %w", err)
+			}
 		}
 	}
 	cert.Block.BlockHeader.Round = basics.Round(round)
@@ -445,7 +455,7 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 		return err
 	}
 
-	g.finishRound(intra)
+	g.finishRound()
 	return nil
 }
 
@@ -877,7 +887,7 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn,
 		return nil, nil, intra, 0, err
 	}
 
-	actual, signedTxns, appID, err := g.generateAppCallInternal(selection.(TxTypeID), round, intra, 0, nil)
+	actual, signedTxns, appID, err := g.generateAppCallInternal(selection.(TxTypeID), round, intra, nil)
 	if err != nil {
 		return nil, nil, intra, appID, fmt.Errorf("unexpected error received from generateAppCallInternal(): %w", err)
 	}
@@ -901,7 +911,7 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn,
 	return signedTxns, ads, intra, appID, nil
 }
 
-func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintIndex uint64, hintApp *appData) (TxTypeID, []txn.SignedTxn, uint64 /* appID */, error) {
+func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64, hintApp *appData) (TxTypeID, []txn.SignedTxn, uint64 /* appID */, error) {
 	var senderIndex uint64
 	if hintApp != nil {
 		senderIndex = hintApp.creator
@@ -929,11 +939,9 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 		} else {
 			approval, clear = approvalBoxes, clearBoxes
 		}
-		signedTxns = []txn.SignedTxn{
-			signTxn(g.makeAppCreateTxn(senderAcct, round, intra, approval, clear)),
-		}
-
 		appID = g.txnCounter + intra + 1
+		signedTxns = g.makeAppCreateTxn(senderAcct, round, intra, approval, clear, appID)
+		reSignTxns(signedTxns)
 
 		for k := range g.appMap {
 			if g.appMap[k][appID] != nil {
@@ -952,7 +960,7 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra, hintI
 		g.pendingAppMap[kind][appID] = ad
 
 	case appTxTypeOptin:
-		signedTxns = g.makeAppOptinTxn(senderAcct, round, intra, appID)
+		signedTxns = g.makeAppOptinTxn(senderAcct, round, intra, kind, appID)
 		reSignTxns(signedTxns)
 		if g.pendingAppMap[kind][appID] == nil {
 			ad := &appData{
@@ -1026,40 +1034,42 @@ func (g *generator) getActualAppCall(txType TxTypeID, senderIndex uint64) (TxTyp
 		return getAppTxType(kind, appTxTypeCreate), kind, appTxTypeCreate, 0, nil
 	}
 
-	// anything else requires an appID
-	// TODO: the appID for appTxTypeCall should ideally be an appID that the sender is opted in to.
-	// We'll want to store a new map: senderIdx --> []map[kind]map[appId]bool
-	appID := g.appSlice[kind][rand.Uint64()%numAppsForKind].appID
+	if appTxType == appTxTypeOptin {
+		// pick a random app to optin:
+		appID := g.appSlice[kind][rand.Uint64()%numAppsForKind].appID
 
-	_, exists, optedIn := g.getAppData(true /* existing */, kind, senderIndex, appID)
-	if !exists {
-		return txType, kind, appTxType, appID, fmt.Errorf("should never happen! app %d of kind %s does not exist", appID, kind)
-	}
-	_, _, optedInPending := g.getAppData(false /* pending */, kind, senderIndex, appID)
+		_, exists, optedIn := g.getAppData(true /* existing */, kind, senderIndex, appID)
+		if !exists {
+			return txType, kind, appTxType, appID, fmt.Errorf("should never happen! app %d of kind %s does not exist", appID, kind)
+		}
 
-	switch appTxType {
-	case appTxTypeOptin:
 		if optedIn {
 			// already optedin, so call the app instead:
 			return getAppTxType(kind, appTxTypeCall), kind, appTxTypeCall, appID, nil
 		}
+
+		_, _, optedInPending := g.getAppData(false /* pending */, kind, senderIndex, appID)
 		if optedInPending {
 			// about to get opted in, but can't optin twice or call yet, so create:
 			return getAppTxType(kind, appTxTypeCreate), kind, appTxTypeCreate, appID, nil
 		}
-	case appTxTypeCall:
-		if !optedIn {
-			if !optedInPending {
-				// not opted in or pending, so optin first:
-				return getAppTxType(kind, appTxTypeOptin), kind, appTxTypeOptin, appID, nil
-			}
-			// optin is pending, so create instead:
-			return getAppTxType(kind, appTxTypeCreate), kind, appTxTypeCreate, appID, nil
-		}
-	default: // appTxTypeCreate, appTxTypeUpdate, appTxTypeDelete, appTxTypeClose, appTxTypeClear:
+		// not opted in or pending, so optin:
+		return txType, kind, appTxType, appID, nil
+	}
+
+	if appTxType != appTxTypeCall {
 		return "", 0, 0, 0, fmt.Errorf("unimplemented transaction type for app %s from %s", appTxType, txType)
 	}
-	// got here? do what was originally asked for:
+	// WLOG appTxTypeCall:
+
+	numAppsOptedin := uint64(len(g.accountAppOptins[kind][senderIndex]))
+	if numAppsOptedin == 0 {
+		// try again calling recursively but attempting to optin:
+		return g.getActualAppCall(getAppTxType(kind, appTxTypeOptin), senderIndex)
+	}
+	// WLOG appTxTypeCall with available optins:
+
+	appID := g.accountAppOptins[kind][senderIndex][rand.Uint64()%numAppsOptedin]
 	return txType, kind, appTxType, appID, nil
 }
 
@@ -1080,7 +1090,7 @@ func (g *generator) recordData(id TxTypeID, start time.Time) {
 }
 
 func (g *generator) recordOccurrences(id TxTypeID, count uint64, start time.Time) {
-	g.latestData[id]++
+	g.latestData[id] += count
 	data := g.reportData[id]
 	data.GenerationCount += count
 	data.GenerationTime += time.Since(start)
@@ -1111,8 +1121,7 @@ func (g *generator) txnForRound(round uint64) uint64 {
 }
 
 // finishRound tells the generator it can apply any pending state.
-func (g *generator) finishRound(txnCount uint64) {
-	// g.txnCounter += txnCount
+func (g *generator) finishRound() {
 	latestHeader, err := g.ledger.BlockHdr(basics.Round(g.round))
 	if err != nil {
 		panic(fmt.Sprintf("\n\nCould not obtain block header for round %d: %v\n\n", g.round, err))
@@ -1125,23 +1134,27 @@ func (g *generator) finishRound(txnCount uint64) {
 	g.assets = append(g.assets, g.pendingAssets...)
 	g.pendingAssets = nil
 
-	// TODO: temporarily, the below logic is happening in ledgerAddBlock()
-	// for kind, pendingAppSlice := range g.pendingAppSlice {
-	// 	for _, pendingApp := range pendingAppSlice {
-	// 		appID := pendingApp.appID
-	// 		if g.appMap[kind][appID] == nil {
-	// 			g.appSlice[kind] = append(g.appSlice[kind], pendingApp)
-	// 			g.appMap[kind][appID] = pendingApp
-	// 		} else { // just union the optins when already exists
-	// 			for sender := range pendingApp.optins {
-	// 				g.appMap[kind][appID].optins[sender] = true
-	// 			}
-	// 		}
-	// 	}
-	// }
-	// g.resetPendingApps()
 	g.latestPaysetWithExpectedID = nil
 	g.latestData = make(map[TxTypeID]uint64)
+
+	for kind, pendingAppSlice := range g.pendingAppSlice {
+		for _, pendingApp := range pendingAppSlice {
+			appID := pendingApp.appID
+			if g.appMap[kind][appID] == nil {
+				g.appSlice[kind] = append(g.appSlice[kind], pendingApp)
+				g.appMap[kind][appID] = pendingApp
+				for sender := range pendingApp.optins {
+					g.accountAppOptins[kind][sender] = append(g.accountAppOptins[kind][sender], appID)
+				}
+			} else { // just union the optins when already exists
+				for sender := range pendingApp.optins {
+					g.appMap[kind][appID].optins[sender] = true
+					g.accountAppOptins[kind][sender] = append(g.accountAppOptins[kind][sender], appID)
+				}
+			}
+		}
+	}
+	g.resetPendingApps()
 }
 
 func signTxn(transaction txn.Transaction) txn.SignedTxn {
@@ -1169,55 +1182,63 @@ func reSignTxns(signedTxns []txn.SignedTxn) {
 	}
 }
 
-// TEMPORARY
-
-func (g *generator) ledgerAddBlock(intra uint64, blk bookkeeping.Block, cert agreement.Certificate) error {
-	l := g.ledger
-	// passing nil as the executionPool is ok since we've asking the evaluator to skip verification.
-	updates, err := eval.Eval(context.Background(), l, blk, false, l.VerifiedTransactionCache(), nil, l.GetTracer())
+func (g *generator) introspectLedgerVsGenerator(roundNumber, intra uint64) error {
+	round := basics.Round(roundNumber)
+	block, err := g.ledger.Block(round)
 	if err != nil {
-		if errNSBE, ok := err.(ledgercore.ErrNonSequentialBlockEval); ok && errNSBE.EvaluatorRound <= errNSBE.LatestRound {
-			return ledgercore.BlockInLedgerError{
-				LastRound: errNSBE.EvaluatorRound,
-				NextRound: errNSBE.LatestRound + 1}
-		}
 		return err
 	}
-	vb := ledgercore.MakeValidatedBlock(blk, updates)
 
-	round := blk.Round()
-	appResources := updates.Accts.AppResources
-	boxes := updates.KvMods
+	ledgerStateDeltas, err := g.ledger.GetStateDeltaForRound(round)
+	if err != nil {
+		return err
+	}
 
+	cumulative := make(map[TxTypeID]uint64)
+	for ttID, data := range g.reportData {
+		cumulative[ttID] = data.GenerationCount
+	}
+
+	sum := uint64(0)
+	for ttID, cnt := range cumulative {
+		if ttID == genesis {
+			continue
+		}
+		sum += cnt
+	}
 	fmt.Print("--------------------\n")
-	fmt.Printf("round: %d\n", round)
+	fmt.Printf("roundNumber (generator): %d\n", roundNumber)
 	fmt.Printf("g.txnCounter + intra: %d\n", g.txnCounter+intra)
-	fmt.Printf("blk.BlockHeader.TxnCounter: %d\n", blk.BlockHeader.TxnCounter)
+	fmt.Printf("block.BlockHeader.TxnCounter: %d\n", block.BlockHeader.TxnCounter)
+	fmt.Printf("len(g.latestPaysetWithExpectedID): %d\n", len(g.latestPaysetWithExpectedID))
 	fmt.Printf("g.latestData: %+v\n", g.latestData)
+	fmt.Printf("cumuluative : %+v\n", cumulative)
+	fmt.Printf("all txn sum: %d\n", sum)
 	fmt.Print("--------------------\n")
-	// for _, appRes := range appResources {
-	// 	fmt.Printf("appRes: %+v\n", appRes)
-	// }
-	_ = appResources
 
-	boxEvidenceCount := 0
-	boxEvidence := make(map[uint64][]uint64)
+	// ---- FROM THE LEDGER: box and createable evidence ---- //
+
+	ledgerBoxEvidenceCount := 0
+	ledgerBoxEvidence := make(map[uint64][]uint64)
+	boxes := ledgerStateDeltas.KvMods
 	for k := range boxes {
 		appID, nameIEsender, _ := apps.SplitBoxKey(k)
-		boxEvidence[appID] = append(boxEvidence[appID], binary.LittleEndian.Uint64([]byte(nameIEsender))-1)
-		boxEvidenceCount++
+		ledgerBoxEvidence[appID] = append(ledgerBoxEvidence[appID], binary.LittleEndian.Uint64([]byte(nameIEsender))-1)
+		ledgerBoxEvidenceCount++
 	}
 
-	creatableAppsEvidence := make(map[uint64]uint64)
-	for creatableID, creatable := range updates.Creatables {
+	// TODO: can get richer info about app-Creatables from:
+	// updates.Accts.AppResources
+	ledgerCreatableAppsEvidence := make(map[uint64]uint64)
+	for creatableID, creatable := range ledgerStateDeltas.Creatables {
 		if creatable.Ctype == basics.AppCreatable {
-			creatableAppsEvidence[uint64(creatableID)] = accountToIndex(creatable.Creator)
+			ledgerCreatableAppsEvidence[uint64(creatableID)] = accountToIndex(creatable.Creator)
 		}
 	}
-	// fmt.Printf("boxEvidence: %+v\n", boxEvidence)
-	// fmt.Printf("creatableEvidence: %+v\n", creatableEvidence)
-	fmt.Printf("boxEvidenceCount: %d\n", boxEvidenceCount)
-	fmt.Printf("creatableEvidence: %d\n", len(creatableAppsEvidence))
+	fmt.Printf("ledgerBoxEvidenceCount: %d\n", ledgerBoxEvidenceCount)
+	fmt.Printf("ledgerCreatableAppsEvidence: %d\n", len(ledgerCreatableAppsEvidence))
+
+	// ---- FROM THE GENERATOR: expected created and optins ---- //
 
 	expectedCreated := map[appKind]map[uint64]uint64{
 		appKindBoxes: make(map[uint64]uint64),
@@ -1239,70 +1260,52 @@ func (g *generator) ledgerAddBlock(intra uint64, blk bookkeeping.Block, cert agr
 			}
 		}
 	}
-
-	// fmt.Printf("expectedCreated: %+v\n", expectedCreated)
-	// fmt.Printf("expectedOptins: %+v\n", expectedOptins)
 	fmt.Printf("expectedCreatedCount: %d\n", len(expectedCreated[appKindBoxes]))
 	fmt.Printf("expectedOptinsCount: %d\n", expectedOptinsCount)
 
-	creatablesUnexpected := map[uint64]uint64{}
-	for creatableID, creator := range creatableAppsEvidence {
+	// ---- COMPARE LEDGER AND GENERATOR EVIDENCE ---- //
+
+	ledgerCreatablesUnexpected := map[uint64]uint64{}
+	for creatableID, creator := range ledgerCreatableAppsEvidence {
 		if expectedCreated[appKindSwap][creatableID] != creator && expectedCreated[appKindBoxes][creatableID] != creator {
-			creatablesUnexpected[creatableID] = creator
+			ledgerCreatablesUnexpected[creatableID] = creator
 		}
 	}
-	fmt.Printf("creatablesUnexpected: %+v\n", creatablesUnexpected)
-
-	expectedCreatedNotFound := map[uint64]uint64{}
+	generatorExpectedCreatablesNotFound := map[uint64]uint64{}
 	for creatableID, creator := range expectedCreated[appKindBoxes] {
-		if creatableAppsEvidence[creatableID] != creator {
-			expectedCreatedNotFound[creatableID] = creator
+		if ledgerCreatableAppsEvidence[creatableID] != creator {
+			generatorExpectedCreatablesNotFound[creatableID] = creator
 		}
 	}
-	fmt.Printf("expectedCreatedNotFound: %+v\n", expectedCreatedNotFound)
 
-	boxOptinsUnexpected := map[uint64][]uint64{}
-	for appId, boxOptins := range boxEvidence {
+	ledgerBoxOptinsUnexpected := map[uint64][]uint64{}
+	for appId, boxOptins := range ledgerBoxEvidence {
 		for _, optin := range boxOptins {
 			if _, ok := expectedOptins[appKindBoxes][appId][optin]; !ok {
-				boxOptinsUnexpected[appId] = append(boxOptinsUnexpected[appId], optin)
+				ledgerBoxOptinsUnexpected[appId] = append(ledgerBoxOptinsUnexpected[appId], optin)
 			}
 		}
 	}
-	fmt.Printf("boxOptinsUnexpected: %+v\n", boxOptinsUnexpected)
 
-	expectedOptinsNotFound := map[uint64][]uint64{}
+	generatorExpectedOptinsNotFound := map[uint64][]uint64{}
 	for appId, appOptins := range expectedOptins[appKindBoxes] {
 		for optin := range appOptins {
 			missing := true
-			for _, boxOptin := range boxEvidence[appId] {
+			for _, boxOptin := range ledgerBoxEvidence[appId] {
 				if boxOptin == optin {
 					missing = false
 					break
 				}
 			}
 			if missing {
-				expectedOptinsNotFound[appId] = append(expectedOptinsNotFound[appId], optin)
+				generatorExpectedOptinsNotFound[appId] = append(generatorExpectedOptinsNotFound[appId], optin)
 			}
 		}
 	}
-	fmt.Printf("expectedOptinsNotFound: %+v\n", expectedOptinsNotFound)
 
-	// clear the pending here instead of in finishRound
-	for kind, pendingAppSlice := range g.pendingAppSlice {
-		for _, pendingApp := range pendingAppSlice {
-			appID := pendingApp.appID
-			if g.appMap[kind][appID] == nil {
-				g.appSlice[kind] = append(g.appSlice[kind], pendingApp)
-				g.appMap[kind][appID] = pendingApp
-			} else { // just union the optins when already exists
-				for sender := range pendingApp.optins {
-					g.appMap[kind][appID].optins[sender] = true
-				}
-			}
-		}
-	}
-	g.resetPendingApps()
-
-	return l.AddValidatedBlock(vb, cert)
+	fmt.Printf("ledgerCreatablesUnexpected: %+v\n", ledgerCreatablesUnexpected)
+	fmt.Printf("generatorExpectedCreatablesNotFound: %+v\n", generatorExpectedCreatablesNotFound)
+	fmt.Printf("ledgerBoxOptinsUnexpected: %+v\n", ledgerBoxOptinsUnexpected)
+	fmt.Printf("expectedOptinsNotFound: %+v\n", generatorExpectedOptinsNotFound)
+	return nil
 }

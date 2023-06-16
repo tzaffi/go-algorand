@@ -41,6 +41,9 @@ type Generator interface {
 }
 
 type generator struct {
+	// TODO: receive this as a parameter
+	verbose bool
+
 	config GenerationConfig
 
 	// payment transaction metadata
@@ -92,6 +95,10 @@ type generator struct {
 	// data structures at the end of each round
 	appMap   map[appKind]map[uint64]*appData
 	appSlice map[appKind][]*appData
+
+	// accountAppOptins is used to keep track of which accounts have opted into
+	// for ease in random selection.
+	accountAppOptins map[appKind]map[uint64][]uint64
 
 	// // pendingApps is used to hold newly created apps so that they are not used before
 	// // being created.

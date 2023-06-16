@@ -122,18 +122,12 @@ func (g *generator) makeAssetAcceptanceTxn(header txn.Header, index uint64) txn.
 
 // ---- application transactions ----
 
-func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64, approval, clear string) txn.Transaction {
-
+func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64, approval, clear string, futureAppId uint64) []txn.SignedTxn {
 	createTxn := g.makeTestTxn(sender, round, intra)
 
 	createTxn.Type = protocol.ApplicationCallTx
 	createTxn.ApprovalProgram = approval
 	createTxn.ClearStateProgram = clear
-
-	/*** NOPE
-	// sender opts-in to their own created app
-	createTxn.OnCompletion = txn.OptInOC
-	***/
 
 	// max out local/global state usage but split
 	// 50% between bytes/uint64
@@ -146,23 +140,35 @@ func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64,
 		NumByteSlice: 32,
 	}
 
-	return createTxn.Txn()
+	// also group in a pay txn to fund the app
+	paySibTxn := g.makeTestTxn(sender, round, intra)
+	paySibTxn.Type = protocol.PaymentTx
+	paySibTxn.Receiver = basics.AppIndex(futureAppId).Address()
+	paySibTxn.Fee = basics.MicroAlgos{Raw: 1_000}
+	paySibTxn.Amount = uint64(1_000_000)
+
+	return txntest.Group(&createTxn, &paySibTxn)
 }
 
 // makeAppOptinTxn currently only works for the boxes app
-func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra, appIndex uint64) []txn.SignedTxn {
-	/* all 0 values but keep around for reference
-	createTxn.ApplicationArgs = nil
-	createTxn.Accounts = nil
-	createTxn.ForeignApps = nil
-	createTxn.ForeignAssets = nil
-	createTxn.ExtraProgramPages = 0
-	*/
+func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra uint64, kind appKind, appIndex uint64) []txn.SignedTxn {
+	if kind != appKindBoxes {
+		panic("makeAppOptinTxn only works for the boxes app currently")
+	}
 
 	optInTxn := g.makeTestTxn(sender, round, intra)
+	/* all 0 values but keep around for reference
+	optInTxn.ApplicationArgs = nil
+	optInTxn.ForeignApps = nil
+	optInTxn.ForeignAssets = nil
+	optInTxn.ExtraProgramPages = 0
+	*/
+
 	optInTxn.Type = protocol.ApplicationCallTx
 	optInTxn.ApplicationID = basics.AppIndex(appIndex)
 	optInTxn.OnCompletion = txn.OptInOC
+	// the first inner sends some algo to the creator:
+	optInTxn.Accounts = []basics.Address{indexToAccount(g.appMap[kind][appIndex].creator)}
 	optInTxn.Boxes = []txn.BoxRef{
 		{Name: crypto.Digest(sender).ToSlice()},
 	}
@@ -171,8 +177,8 @@ func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra, appInde
 	paySibTxn := g.makeTestTxn(sender, round, intra)
 	paySibTxn.Type = protocol.PaymentTx
 	paySibTxn.Receiver = basics.AppIndex(appIndex).Address()
-	paySibTxn.Fee = basics.MicroAlgos{Raw: 2000}
-	paySibTxn.Amount = uint64(2000)
+	paySibTxn.Fee = basics.MicroAlgos{Raw: 2_000}
+	paySibTxn.Amount = uint64(1_000_000)
 
 	return txntest.Group(&optInTxn, &paySibTxn)
 }
