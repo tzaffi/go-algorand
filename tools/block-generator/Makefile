@@ -1,7 +1,7 @@
-# scenarios/config.app.boxes.yml # scenarios/config.app.create.yml # test_config.yml
-# scenarios/config.payment.full.yml
+# scenarios/config.appboxes.small.yml # scenarios/config.appcreate.small.yml # test_config.yml
+# scenarios/config.payment.full.yml # scenarios/config.allmixed.small.yml
 
-SCENARIO = scenarios/config.app.boxes.yml
+SCENARIO = scenarios/config.allmixed.small.yml
 SKIP = --skip-runner
 RESETDB = --reset-db
 REPORTS = ../../tmp/RUN_RUNNER_OUTPUTS
