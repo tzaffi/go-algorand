@@ -137,10 +137,10 @@ type assetData struct {
 }
 
 type appData struct {
-	appID   uint64
-	creator uint64
-	kind    appKind
-	optins  map[uint64]bool
+	appID  uint64
+	sender uint64
+	kind   appKind
+	optins map[uint64]bool
 }
 
 type assetHolding struct {

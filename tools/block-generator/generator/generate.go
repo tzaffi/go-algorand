@@ -921,7 +921,7 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn,
 func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64, hintApp *appData) (TxTypeID, []txn.SignedTxn, uint64 /* appID */, error) {
 	var senderIndex uint64
 	if hintApp != nil {
-		senderIndex = hintApp.creator
+		senderIndex = hintApp.sender
 	} else {
 		senderIndex = rand.Uint64() % g.numAccounts
 	}
@@ -957,10 +957,10 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64
 		}
 
 		ad := &appData{
-			appID:   appID,
-			creator: senderIndex,
-			kind:    kind,
-			optins:  map[uint64]bool{},
+			appID:  appID,
+			sender: senderIndex,
+			kind:   kind,
+			optins: map[uint64]bool{},
 		}
 
 		g.pendingAppSlice[kind] = append(g.pendingAppSlice[kind], ad)
@@ -972,6 +972,8 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64
 		if g.pendingAppMap[kind][appID] == nil {
 			ad := &appData{
 				appID:  appID,
+				sender: senderIndex,
+				kind:   kind,
 				optins: map[uint64]bool{},
 			}
 			g.pendingAppMap[kind][appID] = ad
@@ -1273,7 +1275,7 @@ func (g *generator) introspectLedgerVsGenerator(roundNumber, intra uint64) error
 				expectedOptins[kind][appID] = ad.optins
 				expectedOptinsCount += len(ad.optins)
 			} else {
-				expectedCreated[kind][appID] = ad.creator
+				expectedCreated[kind][appID] = ad.sender
 			}
 		}
 	}

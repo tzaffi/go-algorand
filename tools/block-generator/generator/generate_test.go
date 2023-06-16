@@ -70,7 +70,7 @@ func TestAssetXferNoAssetsOverride(t *testing.T) {
 
 	// First asset transaction must create.
 	actual, txn, assetID := g.generateAssetTxnInternal(assetXfer, 1, 0)
-	_ = assetID
+	require.NotEqual(t, 0, assetID)
 	require.Equal(t, assetCreate, actual)
 	require.Equal(t, protocol.AssetConfigTx, txn.Type)
 	require.Len(t, g.assets, 0)
@@ -88,7 +88,7 @@ func TestAssetXferOneHolderOverride(t *testing.T) {
 
 	// Transfer converted to optin if there is only 1 holder.
 	actual, txn, assetID := g.generateAssetTxnInternal(assetXfer, 2, 0)
-	_ = assetID
+	require.NotEqual(t, 0, assetID)
 	require.Equal(t, assetOptin, actual)
 	require.Equal(t, protocol.AssetTransferTx, txn.Type)
 	require.Len(t, g.assets, 1)
@@ -106,7 +106,7 @@ func TestAssetCloseCreatorOverride(t *testing.T) {
 
 	// Instead of closing the creator, optin a new account
 	actual, txn, assetID := g.generateAssetTxnInternal(assetClose, 2, 0)
-	_ = assetID
+	require.NotEqual(t, 0, assetID)
 	require.Equal(t, assetOptin, actual)
 	require.Equal(t, protocol.AssetTransferTx, txn.Type)
 	require.Len(t, g.assets, 1)
@@ -128,7 +128,7 @@ func TestAssetOptinEveryAccountOverride(t *testing.T) {
 	var assetID uint64
 	for i := 2; uint64(i) <= g.numAccounts; i++ {
 		actual, txn, assetID = g.generateAssetTxnInternal(assetOptin, 2, uint64(1+i))
-		_ = assetID
+		require.NotEqual(t, 0, assetID)
 		require.Equal(t, assetOptin, actual)
 		require.Equal(t, protocol.AssetTransferTx, txn.Type)
 		require.Len(t, g.assets, 1)
@@ -164,7 +164,7 @@ func TestAssetDestroyWithHoldingsOverride(t *testing.T) {
 	require.Len(t, g.assets[0].holders, 2)
 
 	actual, txn, assetID := g.generateAssetTxnInternal(assetDestroy, 4, 0)
-	_ = assetID
+	require.NotEqual(t, 0, assetID)
 	require.Equal(t, assetClose, actual)
 	require.Equal(t, protocol.AssetTransferTx, txn.Type)
 	require.Len(t, g.assets, 1)
@@ -183,7 +183,7 @@ func TestAssetTransfer(t *testing.T) {
 	g.finishRound()
 	g.generateAssetTxnInternal(assetXfer, 3, 0)
 	g.finishRound()
-	require.Greater(t, g.assets[0].holdings[1].balance, uint64(0))
+	require.NotEqual(t, g.assets[0].holdings[1].balance, uint64(0))
 }
 
 func TestAssetDestroy(t *testing.T) {
@@ -195,7 +195,7 @@ func TestAssetDestroy(t *testing.T) {
 	require.Len(t, g.assets, 1)
 
 	actual, txn, assetID := g.generateAssetTxnInternal(assetDestroy, 2, 0)
-	_ = assetID
+	require.NotEqual(t, 0, assetID)
 	require.Equal(t, assetDestroy, actual)
 	require.Equal(t, protocol.AssetConfigTx, txn.Type)
 	require.Len(t, g.assets, 0)
@@ -238,7 +238,7 @@ func TestAppCreate(t *testing.T) {
 	assembled := assembleApps(t)
 
 	round, intra := uint64(1337), uint64(0)
-	hint := appData{creator: 7}
+	hint := appData{sender: 7}
 
 	// app call transaction creating appBoxes
 	actual, sgnTxns, appID, err := g.generateAppCallInternal(appBoxesCreate, round, intra, &hint)
@@ -249,7 +249,7 @@ func TestAppCreate(t *testing.T) {
 	require.Len(t, sgnTxns, 2)
 	createTxn := sgnTxns[0].Txn
 
-	require.Equal(t, indexToAccount(hint.creator), createTxn.Sender)
+	require.Equal(t, indexToAccount(hint.sender), createTxn.Sender)
 	require.Equal(t, protocol.ApplicationCallTx, createTxn.Type)
 	require.Equal(t, basics.AppIndex(0), createTxn.ApplicationCallTxnFields.ApplicationID)
 	require.Equal(t, assembled.boxesApproval, createTxn.ApplicationCallTxnFields.ApprovalProgram)
@@ -266,7 +266,7 @@ func TestAppCreate(t *testing.T) {
 	require.Len(t, g.pendingAppMap[appKindSwap], 0)
 	ad := g.pendingAppSlice[appKindBoxes][0]
 	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
-	require.Equal(t, hint.creator, ad.creator)
+	require.Equal(t, hint.sender, ad.sender)
 	require.Equal(t, appKindBoxes, ad.kind)
 	optins := ad.optins
 	require.Len(t, optins, 0)
@@ -285,7 +285,7 @@ func TestAppCreate(t *testing.T) {
 	createTxn = sgnTxns[0].Txn
 
 	require.Equal(t, protocol.ApplicationCallTx, createTxn.Type)
-	require.Equal(t, indexToAccount(hint.creator), createTxn.Sender)
+	require.Equal(t, indexToAccount(hint.sender), createTxn.Sender)
 	require.Equal(t, basics.AppIndex(0), createTxn.ApplicationCallTxnFields.ApplicationID)
 	require.Equal(t, assembled.swapsApproval, createTxn.ApplicationCallTxnFields.ApprovalProgram)
 	require.Equal(t, assembled.swapsClear, createTxn.ApplicationCallTxnFields.ClearStateProgram)
@@ -301,7 +301,7 @@ func TestAppCreate(t *testing.T) {
 	require.Len(t, g.pendingAppMap[appKindSwap], 1)
 	ad = g.pendingAppSlice[appKindSwap][0]
 	require.Equal(t, ad, g.pendingAppMap[appKindSwap][ad.appID])
-	require.Equal(t, hint.creator, ad.creator)
+	require.Equal(t, hint.sender, ad.sender)
 	require.Equal(t, appKindSwap, ad.kind)
 	optins = ad.optins
 	require.Len(t, optins, 0)
@@ -316,7 +316,7 @@ func TestAppBoxesOptin(t *testing.T) {
 
 	round, intra := uint64(1337), uint64(0)
 
-	hint := appData{creator: 7}
+	hint := appData{sender: 7}
 
 	// app call transaction opting into boxes gets replaced by creating appBoxes
 	actual, sgnTxns, appID, err := g.generateAppCallInternal(appBoxesOptin, round, intra, &hint)
@@ -324,20 +324,20 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCreate, actual)
 
-	require.Len(t, sgnTxns, 1)
-	txn := sgnTxns[0].Txn
+	require.Len(t, sgnTxns, 2)
+	createTxn := sgnTxns[0].Txn
 
-	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
-	require.Equal(t, indexToAccount(hint.creator), txn.Sender)
-	require.Equal(t, basics.AppIndex(0), txn.ApplicationCallTxnFields.ApplicationID)
-	require.Equal(t, assembled.boxesApproval, txn.ApplicationCallTxnFields.ApprovalProgram)
-	require.Equal(t, assembled.boxesClear, txn.ApplicationCallTxnFields.ClearStateProgram)
-	require.Equal(t, uint64(32), txn.ApplicationCallTxnFields.GlobalStateSchema.NumByteSlice)
-	require.Equal(t, uint64(32), txn.ApplicationCallTxnFields.GlobalStateSchema.NumUint)
-	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumByteSlice)
-	require.Equal(t, uint64(8), txn.ApplicationCallTxnFields.LocalStateSchema.NumUint)
-	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
-	require.Nil(t, txn.ApplicationCallTxnFields.Boxes)
+	require.Equal(t, protocol.ApplicationCallTx, createTxn.Type)
+	require.Equal(t, indexToAccount(hint.sender), createTxn.Sender)
+	require.Equal(t, basics.AppIndex(0), createTxn.ApplicationCallTxnFields.ApplicationID)
+	require.Equal(t, assembled.boxesApproval, createTxn.ApplicationCallTxnFields.ApprovalProgram)
+	require.Equal(t, assembled.boxesClear, createTxn.ApplicationCallTxnFields.ClearStateProgram)
+	require.Equal(t, uint64(32), createTxn.ApplicationCallTxnFields.GlobalStateSchema.NumByteSlice)
+	require.Equal(t, uint64(32), createTxn.ApplicationCallTxnFields.GlobalStateSchema.NumUint)
+	require.Equal(t, uint64(8), createTxn.ApplicationCallTxnFields.LocalStateSchema.NumByteSlice)
+	require.Equal(t, uint64(8), createTxn.ApplicationCallTxnFields.LocalStateSchema.NumUint)
+	require.Equal(t, transactions.NoOpOC, createTxn.ApplicationCallTxnFields.OnCompletion)
+	require.Nil(t, createTxn.ApplicationCallTxnFields.Boxes)
 
 	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
 	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
@@ -345,17 +345,19 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Len(t, g.pendingAppMap[appKindSwap], 0)
 	ad := g.pendingAppSlice[appKindBoxes][0]
 	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
-	require.Equal(t, hint.creator, ad.creator)
+	require.Equal(t, hint.sender, ad.sender)
 	require.Equal(t, appKindBoxes, ad.kind)
-	optins := ad.optins
-	require.Len(t, optins, 1)
-	require.Contains(t, optins, hint.creator)
+	require.Len(t, ad.optins, 0)
 
-	require.NotContains(t, effects, actual)
+	require.Contains(t, effects, actual)
+
+	paySiblingTxn := sgnTxns[1].Txn
+	require.Equal(t, protocol.PaymentTx, paySiblingTxn.Type)
 
 	// 2nd attempt to optin (with new sender) doesn't get replaced
+	g.finishRound()
 	intra += 1
-	hint.creator = 8
+	hint.sender = 8
 
 	actual, sgnTxns, appID, err = g.generateAppCallInternal(appBoxesOptin, round, intra, &hint)
 	_ = appID
@@ -367,17 +369,17 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, protocol.PaymentTx, pay.Type)
 	require.NotEqual(t, basics.Address{}.String(), pay.Sender.String())
 
-	txn = sgnTxns[0].Txn
-	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
-	require.Equal(t, indexToAccount(hint.creator), txn.Sender)
-	require.Equal(t, basics.AppIndex(1001), txn.ApplicationCallTxnFields.ApplicationID)
-	require.Equal(t, []byte(nil), txn.ApplicationCallTxnFields.ApprovalProgram)
-	require.Equal(t, []byte(nil), txn.ApplicationCallTxnFields.ClearStateProgram)
-	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.GlobalStateSchema)
-	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.LocalStateSchema)
-	require.Equal(t, transactions.OptInOC, txn.ApplicationCallTxnFields.OnCompletion)
-	require.Len(t, txn.ApplicationCallTxnFields.Boxes, 1)
-	require.Equal(t, crypto.Digest(pay.Sender).ToSlice(), txn.ApplicationCallTxnFields.Boxes[0].Name)
+	createTxn = sgnTxns[0].Txn
+	require.Equal(t, protocol.ApplicationCallTx, createTxn.Type)
+	require.Equal(t, indexToAccount(hint.sender), createTxn.Sender)
+	require.Equal(t, basics.AppIndex(1001), createTxn.ApplicationCallTxnFields.ApplicationID)
+	require.Equal(t, []byte(nil), createTxn.ApplicationCallTxnFields.ApprovalProgram)
+	require.Equal(t, []byte(nil), createTxn.ApplicationCallTxnFields.ClearStateProgram)
+	require.Equal(t, basics.StateSchema{}, createTxn.ApplicationCallTxnFields.GlobalStateSchema)
+	require.Equal(t, basics.StateSchema{}, createTxn.ApplicationCallTxnFields.LocalStateSchema)
+	require.Equal(t, transactions.OptInOC, createTxn.ApplicationCallTxnFields.OnCompletion)
+	require.Len(t, createTxn.ApplicationCallTxnFields.Boxes, 1)
+	require.Equal(t, crypto.Digest(pay.Sender).ToSlice(), createTxn.ApplicationCallTxnFields.Boxes[0].Name)
 
 	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
 	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
@@ -385,11 +387,11 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Len(t, g.pendingAppMap[appKindSwap], 0)
 	ad = g.pendingAppSlice[appKindBoxes][0]
 	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
-	require.Equal(t, uint64(7), ad.creator) // NOT 8!!!
+	require.Equal(t, hint.sender, ad.sender) // NOT 8!!!
 	require.Equal(t, appKindBoxes, ad.kind)
-	optins = ad.optins
-	require.Len(t, optins, 2)
-	require.Contains(t, optins, hint.creator)
+	optins := ad.optins
+	require.Len(t, optins, 1)
+	require.Contains(t, optins, hint.sender)
 
 	require.Contains(t, effects, actual)
 	require.Len(t, effects[actual], 2)
@@ -401,6 +403,7 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, uint64(4), numTxns)
 
 	// 3rd attempt to optin gets replaced by vanilla app call
+	g.finishRound()
 	intra += numTxns
 
 	actual, sgnTxns, appID, err = g.generateAppCallInternal(appBoxesOptin, round, intra, &hint)
@@ -410,30 +413,23 @@ func TestAppBoxesOptin(t *testing.T) {
 
 	require.Len(t, sgnTxns, 1)
 
-	txn = sgnTxns[0].Txn
-	require.Equal(t, protocol.ApplicationCallTx, txn.Type)
-	require.Equal(t, indexToAccount(hint.creator), txn.Sender)
-	require.Equal(t, basics.AppIndex(1001), txn.ApplicationCallTxnFields.ApplicationID)
-	require.Equal(t, []byte(nil), txn.ApplicationCallTxnFields.ApprovalProgram)
-	require.Equal(t, []byte(nil), txn.ApplicationCallTxnFields.ClearStateProgram)
-	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.GlobalStateSchema)
-	require.Equal(t, basics.StateSchema{}, txn.ApplicationCallTxnFields.LocalStateSchema)
-	require.Equal(t, transactions.NoOpOC, txn.ApplicationCallTxnFields.OnCompletion)
-	require.Len(t, txn.ApplicationCallTxnFields.Boxes, 1)
-	require.Equal(t, crypto.Digest(pay.Sender).ToSlice(), txn.ApplicationCallTxnFields.Boxes[0].Name)
+	createTxn = sgnTxns[0].Txn
+	require.Equal(t, protocol.ApplicationCallTx, createTxn.Type)
+	require.Equal(t, indexToAccount(hint.sender), createTxn.Sender)
+	require.Equal(t, basics.AppIndex(1001), createTxn.ApplicationCallTxnFields.ApplicationID)
+	require.Equal(t, []byte(nil), createTxn.ApplicationCallTxnFields.ApprovalProgram)
+	require.Equal(t, []byte(nil), createTxn.ApplicationCallTxnFields.ClearStateProgram)
+	require.Equal(t, basics.StateSchema{}, createTxn.ApplicationCallTxnFields.GlobalStateSchema)
+	require.Equal(t, basics.StateSchema{}, createTxn.ApplicationCallTxnFields.LocalStateSchema)
+	require.Equal(t, transactions.NoOpOC, createTxn.ApplicationCallTxnFields.OnCompletion)
+	require.Len(t, createTxn.ApplicationCallTxnFields.Boxes, 1)
+	require.Equal(t, crypto.Digest(pay.Sender).ToSlice(), createTxn.ApplicationCallTxnFields.Boxes[0].Name)
 
 	// no change to app states
-	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
+	require.Len(t, g.pendingAppSlice[appKindBoxes], 0)
 	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
-	require.Len(t, g.pendingAppMap[appKindBoxes], 1)
+	require.Len(t, g.pendingAppMap[appKindBoxes], 0)
 	require.Len(t, g.pendingAppMap[appKindSwap], 0)
-	ad = g.pendingAppSlice[appKindBoxes][0]
-	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
-	require.Equal(t, uint64(7), ad.creator) // NOT 8!!!
-	require.Equal(t, appKindBoxes, ad.kind)
-	optins = ad.optins
-	require.Len(t, optins, 2)
-	require.Contains(t, optins, hint.creator)
 
 	require.NotContains(t, effects, actual)
 }

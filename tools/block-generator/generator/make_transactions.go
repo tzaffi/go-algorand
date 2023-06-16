@@ -172,7 +172,7 @@ func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra uint64, 
 	optInTxn.ApplicationID = basics.AppIndex(appIndex)
 	optInTxn.OnCompletion = txn.OptInOC
 	// the first inner sends some algo to the creator:
-	optInTxn.Accounts = []basics.Address{indexToAccount(g.appMap[kind][appIndex].creator)}
+	optInTxn.Accounts = []basics.Address{indexToAccount(g.appMap[kind][appIndex].sender)}
 	optInTxn.Boxes = []txn.BoxRef{
 		{Name: crypto.Digest(sender).ToSlice()},
 	}
