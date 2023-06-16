@@ -122,7 +122,7 @@ func (g *generator) makeAssetAcceptanceTxn(header txn.Header, index uint64) txn.
 
 // ---- application transactions ----
 
-func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64, approval, clear string, futureAppId uint64) []txn.SignedTxn {
+func (g *generator) makeAppCreateTxn(kind appKind, sender basics.Address, round, intra uint64, approval, clear string, futureAppId uint64) []txn.SignedTxn {
 	createTxn := g.makeTestTxn(sender, round, intra)
 
 	createTxn.Type = protocol.ApplicationCallTx
@@ -138,6 +138,10 @@ func (g *generator) makeAppCreateTxn(sender basics.Address, round, intra uint64,
 	createTxn.GlobalStateSchema = basics.StateSchema{
 		NumUint:      32,
 		NumByteSlice: 32,
+	}
+
+	if kind != appKindBoxes {
+		return txntest.Group(&createTxn)
 	}
 
 	// also group in a pay txn to fund the app

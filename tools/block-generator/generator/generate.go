@@ -367,6 +367,7 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 	}
 	// round == nextRound case
 
+	g.startRound()
 	numTxnForBlock := g.txnForRound(g.round)
 
 	var intra uint64 = 0
@@ -395,8 +396,8 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 			UpgradeState: bookkeeping.UpgradeState{
 				CurrentProtocol: g.protocol,
 			},
-			UpgradeVote:        bookkeeping.UpgradeVote{},
-			TxnCounter:         g.txnCounter + numTxnForBlock,
+			UpgradeVote: bookkeeping.UpgradeVote{},
+			// TxnCounter:         g.txnCounter + numTxnForBlock,
 			StateProofTracking: nil,
 		}
 
@@ -428,10 +429,11 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 		}
 
 		if intra < numTxnForBlock {
-			return fmt.Errorf("unexpected number of transactions: %d > %d", numTxnForBlock, intra)
+			return fmt.Errorf("not enough transactions generated: %d > %d", numTxnForBlock, intra)
 			// panic("Unexpected number of transactions.")
 		}
 
+		cert.Block.BlockHeader.TxnCounter = g.txnCounter + intra
 		cert.Block.Payset = transactions
 		cert.Certificate = agreement.Certificate{} // empty certificate for clarity
 
@@ -753,14 +755,14 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 
 		g.pendingAssets = append(g.pendingAssets, &a)
 	} else {
-		// var assetIndex uint64
+		var assetIndex uint64
 		var asset *assetData
 		if hint != nil {
-			assetID = hintIndex
+			assetIndex = hintIndex
 			asset = hint
 		} else {
-			assetID = rand.Uint64() % numAssets
-			asset = g.assets[assetID]
+			assetIndex = rand.Uint64() % numAssets
+			asset = g.assets[assetIndex]
 		}
 
 		switch actual {
@@ -769,22 +771,23 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 
 			// If the creator doesn't have all of them, close instead
 			if asset.holdings[0].balance != assetTotal {
-				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetID, asset)
+				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetIndex, asset)
 			}
 
 			senderIndex = asset.creator
 			creator := indexToAccount(senderIndex)
-			txn = g.makeAssetDestroyTxn(g.makeTxnHeader(creator, round, intra), asset.assetID)
+			assetID = asset.assetID
+			txn = g.makeAssetDestroyTxn(g.makeTxnHeader(creator, round, intra), assetID)
 
 			// Remove asset by moving the last element to the deleted index then trimming the slice.
-			g.assets[assetID] = g.assets[numAssets-1]
+			g.assets[assetIndex] = g.assets[numAssets-1]
 			g.assets = g.assets[:numAssets-1]
 		case assetOptin:
 			// select a random account from asset to optin
 
 			// If every account holds the asset, close instead of optin
 			if uint64(len(asset.holdings)) == g.numAccounts {
-				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetID, asset)
+				return g.generateAssetTxnInternalHint(assetClose, round, intra, assetIndex, asset)
 			}
 
 			// look for an account that does not hold the asset
@@ -794,7 +797,8 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 				exists = asset.holders[senderIndex] != nil
 			}
 			account := indexToAccount(senderIndex)
-			txn = g.makeAssetAcceptanceTxn(g.makeTxnHeader(account, round, intra), asset.assetID)
+			assetID = asset.assetID
+			txn = g.makeAssetAcceptanceTxn(g.makeTxnHeader(account, round, intra), assetID)
 
 			holding := assetHolding{
 				acctIndex: senderIndex,
@@ -807,7 +811,7 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 
 			// If there aren't enough assets to close one, optin an account instead
 			if len(asset.holdings) == 1 {
-				return g.generateAssetTxnInternalHint(assetOptin, round, intra, assetID, asset)
+				return g.generateAssetTxnInternalHint(assetOptin, round, intra, assetIndex, asset)
 			}
 
 			senderIndex = asset.holdings[0].acctIndex
@@ -817,14 +821,15 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 			receiver := indexToAccount(asset.holdings[receiverArrayIndex].acctIndex)
 			amount := uint64(10)
 
-			txn = g.makeAssetTransferTxn(g.makeTxnHeader(sender, round, intra), receiver, amount, basics.Address{}, asset.assetID)
+			assetID = asset.assetID
+			txn = g.makeAssetTransferTxn(g.makeTxnHeader(sender, round, intra), receiver, amount, basics.Address{}, assetID)
 
 			if asset.holdings[0].balance < amount {
-				fmt.Printf("\n\ncreator doesn't have enough funds for asset %d\n\n", asset.assetID)
+				fmt.Printf("\n\ncreator doesn't have enough funds for asset %d\n\n", assetIndex)
 				os.Exit(1)
 			}
 			if g.balances[asset.holdings[0].acctIndex] < g.params.MinTxnFee {
-				fmt.Printf("\n\ncreator doesn't have enough funds for transaction %d\n\n", asset.assetID)
+				fmt.Printf("\n\ncreator doesn't have enough funds for transaction %d\n\n", assetIndex)
 				os.Exit(1)
 			}
 
@@ -835,7 +840,7 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 			// If there aren't enough assets to close one, optin an account instead
 			if len(asset.holdings) == 1 {
 				return g.generateAssetTxnInternalHint(
-					assetOptin, round, intra, assetID, asset)
+					assetOptin, round, intra, assetIndex, asset)
 			}
 
 			numHoldings := uint64(len(asset.holdings))
@@ -846,8 +851,9 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 			closeToAcctIndex := asset.holdings[0].acctIndex
 			closeToAcct := indexToAccount(closeToAcctIndex)
 
+			assetID = asset.assetID
 			txn = g.makeAssetTransferTxn(
-				g.makeTxnHeader(sender, round, intra), closeToAcct, 0, closeToAcct, asset.assetID)
+				g.makeTxnHeader(sender, round, intra), closeToAcct, 0, closeToAcct, assetID)
 
 			asset.holdings[0].balance += asset.holdings[closeIndex].balance
 
@@ -870,7 +876,8 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 	}
 
 	if assetID == 0 {
-		fmt.Printf("\n\nassetID is 0 bus should have been set by generateAssetTxnInternalHint()\n\n")
+		panic(fmt.Sprintf("\n\nassetID is 0 but should have been set by \ngenerateAssetTxnInternalHint(txType=%s, round=%d, intra=%d, hintIndex=%d, hintIsNil=%t)\nactual=%s\n\n",
+			txType, round, intra, hintIndex, hint == nil, actual))
 	}
 
 	g.balances[senderIndex] -= txn.Fee.ToUint64()
@@ -940,7 +947,7 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64
 			approval, clear = approvalBoxes, clearBoxes
 		}
 		appID = g.txnCounter + intra + 1
-		signedTxns = g.makeAppCreateTxn(senderAcct, round, intra, approval, clear, appID)
+		signedTxns = g.makeAppCreateTxn(kind, senderAcct, round, intra, approval, clear, appID)
 		reSignTxns(signedTxns)
 
 		for k := range g.appMap {
@@ -1120,13 +1127,23 @@ func (g *generator) txnForRound(round uint64) uint64 {
 	return g.config.TxnPerBlock
 }
 
-// finishRound tells the generator it can apply any pending state.
-func (g *generator) finishRound() {
-	latestHeader, err := g.ledger.BlockHdr(basics.Round(g.round))
+// startRound updates the generator's txnCounter based on its latest block header.
+// It is assumed that g.round has already been incremented in finishRound()
+func (g *generator) startRound() {
+	if g.round == 0 {
+		// nothing to do in round 0
+		return
+	}
+
+	latestHeader, err := g.ledger.BlockHdr(basics.Round(g.round - 1))
 	if err != nil {
 		panic(fmt.Sprintf("\n\nCould not obtain block header for round %d: %v\n\n", g.round, err))
 	}
 	g.txnCounter = latestHeader.TxnCounter
+}
+
+// finishRound tells the generator it can apply any pending state and updates its round
+func (g *generator) finishRound() {
 	g.timestamp += consensusTimeMilli
 	g.round++
 
