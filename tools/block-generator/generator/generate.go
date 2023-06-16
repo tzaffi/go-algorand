@@ -825,7 +825,7 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 			txn = g.makeAssetTransferTxn(g.makeTxnHeader(sender, round, intra), receiver, amount, basics.Address{}, assetID)
 
 			if asset.holdings[0].balance < amount {
-				fmt.Printf("\n\ncreator doesn't have enough funds for asset %d\n\n", assetIndex)
+				fmt.Printf("\n\ncreator doesn't have enough funds for asset %d\n\n", assetID)
 				os.Exit(1)
 			}
 			if g.balances[asset.holdings[0].acctIndex] < g.params.MinTxnFee {
