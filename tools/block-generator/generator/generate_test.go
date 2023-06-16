@@ -45,7 +45,7 @@ func makePrivateGenerator(t *testing.T, round uint64, genesis bookkeeping.Genesi
 		AssetCreateFraction:          1.0,
 	}
 	cfg.validateWithDefaults(true)
-	publicGenerator, err := MakeGenerator(round, genesis, cfg)
+	publicGenerator, err := MakeGenerator(round, genesis, cfg, true)
 	require.NoError(t, err)
 	return publicGenerator.(*generator)
 }

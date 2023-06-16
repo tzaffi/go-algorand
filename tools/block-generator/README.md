@@ -136,7 +136,7 @@ Flags:
       --cpuprofile string                   Path where conduit writes its CPU profile.
   -h, --help                                help for runner
   -k, --keep-data-dir                       If set the validator will not delete the data directory after tests complete.
-  -l, --log-level string                    LogLevel to use when starting conduit. [panic, fatal, error, warn, info, debug, trace] (default "error")
+  -l, --conduit-log-level string                    LogLevel to use when starting conduit. [panic, fatal, error, warn, info, debug, trace] (default "error")
   -p, --metrics-port uint                   Port to start the metrics server at. (default 9999)
   -c, --postgres-connection-string string   Postgres connection string.
   -r, --report-directory string             Location to place test reports.

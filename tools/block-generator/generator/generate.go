@@ -62,7 +62,8 @@ var clearSwap string
 // effects is a map that contains the hard-coded non-trivial
 // consequents of a transaction type:
 //
-// appBoxesOptin: 1 payment tx, 1 inner tx
+// appBoxesCreate: 1 sibling payment tx
+// appBoxesOptin: 1 sibling payment tx, 2 inner tx
 var effects map[TxTypeID][]TxEffect
 
 func init() {
@@ -80,14 +81,14 @@ func init() {
 // ---- constructors ----
 
 // MakeGenerator initializes the Generator object.
-func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config GenerationConfig) (Generator, error) {
+func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config GenerationConfig, verbose bool) (Generator, error) {
 	if err := config.validateWithDefaults(false); err != nil {
 		return nil, fmt.Errorf("invalid generator configuration: %w", err)
 	}
 
 	var proto protocol.ConsensusVersion = "future"
 	gen := &generator{
-		verbose:                   true,
+		verbose:                   verbose,
 		config:                    config,
 		protocol:                  proto,
 		params:                    cconfig.Consensus[proto],
@@ -329,9 +330,9 @@ func (g *generator) WriteGenesis(output io.Writer) error {
 //   - requested round < offset ---> error
 //   - requested round == offset: the generator will provide a genesis block or offset block
 //   - requested round == generator's round + offset ---> generate a block,
-//		advance the round, and cache the block in case of repeated requests.
+//     advance the round, and cache the block in case of repeated requests.
 //   - requested round == generator's round + offset - 1 ---> write the cached block
-//		but do not advance the round.
+//     but do not advance the round.
 //   - requested round < generator's round + offset - 1 ---> error
 //
 // NOTE: nextRound represents the generator's expectations about the next database round.

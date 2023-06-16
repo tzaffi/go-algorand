@@ -71,7 +71,6 @@ const (
 	appBoxesClear  TxTypeID = "app_boxes_clear"
 
 	// Special TxTypeID's recording effects of higher level transactions
-	// effectBoxesCreated TxTypeID = "effect_boxes_created" // not including as don't want to add to the txn summ
 	effectPaymentTxSibling TxTypeID = "effect_payment_sibling"
 	effectInnerTx          TxTypeID = "effect_inner_tx"
 
@@ -188,8 +187,8 @@ func parseAppTxType(txType TxTypeID) (isApp bool, kind appKind, tx appTxType, er
 	return
 }
 
-func getAppTxType(kind appKind, a appTxType) TxTypeID {
-	return TxTypeID(fmt.Sprintf("app_%s_%s", kind, a))
+func getAppTxType(kind appKind, appType appTxType) TxTypeID {
+	return TxTypeID(fmt.Sprintf("app_%s_%s", kind, appType))
 }
 
 // GenerationConfig defines the tunable parameters for block generation.

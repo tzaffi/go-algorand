@@ -6,6 +6,7 @@ SKIP = --skip-runner
 RESETDB = --reset-db
 REPORTS = ../../tmp/RUN_RUNNER_OUTPUTS
 DURATION = 30s
+VERBOSE = --verbose
 
 debug-blockgen:
 	python run_runner.py \
@@ -33,13 +34,13 @@ block-generator: clean
 
 run-runner: block-generator
 	./block-generator runner --conduit-binary ./conduit \
-	--log-level trace \
 	--keep-data-dir \
 	--test-duration $(DURATION) \
-	--log-level trace \
+	--conduit-log-level trace \
 	--postgres-connection-string "host=localhost user=algorand password=algorand dbname=generator_db port=15432 sslmode=disable" \
 	--scenario $(SCENARIO) \
 	$(RESETDB) \
+	$(VERBOSE) \
 	--report-directory $(REPORTS)
 
 pre-git-push:
