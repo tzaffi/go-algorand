@@ -289,7 +289,7 @@ func (g *generator) WriteGenesis(output io.Writer) error {
 		addr := indexToAccount(i)
 		allocations = append(allocations, bookkeeping.GenesisAllocation{
 			Address: addr.String(),
-			State: basics.AccountData{
+			State: bookkeeping.GenesisAccountData{
 				MicroAlgos: basics.MicroAlgos{Raw: g.config.GenesisAccountInitialBalance},
 			},
 		})
@@ -299,7 +299,7 @@ func (g *generator) WriteGenesis(output io.Writer) error {
 	allocations = append(allocations, bookkeeping.GenesisAllocation{
 		Address: g.rewardsPool.String(),
 		Comment: "RewardsPool",
-		State: basics.AccountData{
+		State: bookkeeping.GenesisAccountData{
 			MicroAlgos: basics.MicroAlgos{Raw: g.params.MinBalance},
 			Status:     basics.NotParticipating,
 		},
@@ -440,7 +440,7 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 			return err
 		}
 		if g.verbose {
-			err := g.introspectLedgerVsGenerator(round, intra)
+			err := g.introspectLedgerVsGenerator(g.round, intra)
 			if err != nil {
 				return fmt.Errorf("introspecting ledger resulted in an error: %w", err)
 			}

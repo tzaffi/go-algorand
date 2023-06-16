@@ -69,7 +69,8 @@ func TestAssetXferNoAssetsOverride(t *testing.T) {
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
 
 	// First asset transaction must create.
-	actual, txn := g.generateAssetTxnInternal(assetXfer, 1, 0)
+	actual, txn, assetID := g.generateAssetTxnInternal(assetXfer, 1, 0)
+	_ = assetID
 	require.Equal(t, assetCreate, actual)
 	require.Equal(t, protocol.AssetConfigTx, txn.Type)
 	require.Len(t, g.assets, 0)
@@ -81,12 +82,13 @@ func TestAssetXferNoAssetsOverride(t *testing.T) {
 func TestAssetXferOneHolderOverride(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
-	g.finishRound(0)
+	g.finishRound()
 	g.generateAssetTxnInternal(assetCreate, 1, 0)
-	g.finishRound(1)
+	g.finishRound()
 
 	// Transfer converted to optin if there is only 1 holder.
-	actual, txn := g.generateAssetTxnInternal(assetXfer, 2, 0)
+	actual, txn, assetID := g.generateAssetTxnInternal(assetXfer, 2, 0)
+	_ = assetID
 	require.Equal(t, assetOptin, actual)
 	require.Equal(t, protocol.AssetTransferTx, txn.Type)
 	require.Len(t, g.assets, 1)
@@ -98,12 +100,13 @@ func TestAssetXferOneHolderOverride(t *testing.T) {
 func TestAssetCloseCreatorOverride(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
-	g.finishRound(0)
+	g.finishRound()
 	g.generateAssetTxnInternal(assetCreate, 1, 0)
-	g.finishRound(1)
+	g.finishRound()
 
 	// Instead of closing the creator, optin a new account
-	actual, txn := g.generateAssetTxnInternal(assetClose, 2, 0)
+	actual, txn, assetID := g.generateAssetTxnInternal(assetClose, 2, 0)
+	_ = assetID
 	require.Equal(t, assetOptin, actual)
 	require.Equal(t, protocol.AssetTransferTx, txn.Type)
 	require.Len(t, g.assets, 1)
@@ -115,29 +118,31 @@ func TestAssetCloseCreatorOverride(t *testing.T) {
 func TestAssetOptinEveryAccountOverride(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
-	g.finishRound(0)
+	g.finishRound()
 	g.generateAssetTxnInternal(assetCreate, 1, 0)
-	g.finishRound(1)
+	g.finishRound()
 
 	// Opt all the accounts in, this also verifies that no account is opted in twice
 	var txn transactions.Transaction
 	var actual TxTypeID
+	var assetID uint64
 	for i := 2; uint64(i) <= g.numAccounts; i++ {
-		actual, txn = g.generateAssetTxnInternal(assetOptin, 2, uint64(1+i))
+		actual, txn, assetID = g.generateAssetTxnInternal(assetOptin, 2, uint64(1+i))
+		_ = assetID
 		require.Equal(t, assetOptin, actual)
 		require.Equal(t, protocol.AssetTransferTx, txn.Type)
 		require.Len(t, g.assets, 1)
 		require.Len(t, g.assets[0].holdings, i)
 		require.Len(t, g.assets[0].holders, i)
 	}
-	g.finishRound(2)
+	g.finishRound()
 
 	// All accounts have opted in
 	require.Equal(t, g.numAccounts, uint64(len(g.assets[0].holdings)))
 
 	// The next optin closes instead
-	actual, txn = g.generateAssetTxnInternal(assetOptin, 3, 0)
-	g.finishRound(3)
+	actual, txn, assetID = g.generateAssetTxnInternal(assetOptin, 3, 0)
+	g.finishRound()
 	require.Equal(t, assetClose, actual)
 	require.Equal(t, protocol.AssetTransferTx, txn.Type)
 	require.Len(t, g.assets, 1)
@@ -148,17 +153,18 @@ func TestAssetOptinEveryAccountOverride(t *testing.T) {
 func TestAssetDestroyWithHoldingsOverride(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
-	g.finishRound(0)
+	g.finishRound()
 	g.generateAssetTxnInternal(assetCreate, 1, 0)
-	g.finishRound(1)
+	g.finishRound()
 	g.generateAssetTxnInternal(assetOptin, 2, 0)
-	g.finishRound(2)
+	g.finishRound()
 	g.generateAssetTxnInternal(assetXfer, 3, 0)
-	g.finishRound(3)
+	g.finishRound()
 	require.Len(t, g.assets[0].holdings, 2)
 	require.Len(t, g.assets[0].holders, 2)
 
-	actual, txn := g.generateAssetTxnInternal(assetDestroy, 4, 0)
+	actual, txn, assetID := g.generateAssetTxnInternal(assetDestroy, 4, 0)
+	_ = assetID
 	require.Equal(t, assetClose, actual)
 	require.Equal(t, protocol.AssetTransferTx, txn.Type)
 	require.Len(t, g.assets, 1)
@@ -169,26 +175,27 @@ func TestAssetDestroyWithHoldingsOverride(t *testing.T) {
 func TestAssetTransfer(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
-	g.finishRound(0)
+	g.finishRound()
 
 	g.generateAssetTxnInternal(assetCreate, 1, 0)
-	g.finishRound(1)
+	g.finishRound()
 	g.generateAssetTxnInternal(assetOptin, 2, 0)
-	g.finishRound(2)
+	g.finishRound()
 	g.generateAssetTxnInternal(assetXfer, 3, 0)
-	g.finishRound(3)
+	g.finishRound()
 	require.Greater(t, g.assets[0].holdings[1].balance, uint64(0))
 }
 
 func TestAssetDestroy(t *testing.T) {
 	partitiontest.PartitionTest(t)
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
-	g.finishRound(0)
+	g.finishRound()
 	g.generateAssetTxnInternal(assetCreate, 1, 0)
-	g.finishRound(1)
+	g.finishRound()
 	require.Len(t, g.assets, 1)
 
-	actual, txn := g.generateAssetTxnInternal(assetDestroy, 2, 0)
+	actual, txn, assetID := g.generateAssetTxnInternal(assetDestroy, 2, 0)
+	_ = assetID
 	require.Equal(t, assetDestroy, actual)
 	require.Equal(t, protocol.AssetConfigTx, txn.Type)
 	require.Len(t, g.assets, 0)
@@ -234,7 +241,8 @@ func TestAppCreate(t *testing.T) {
 	hint := appData{creator: 7}
 
 	// app call transaction creating appBoxes
-	actual, sgnTxns, err := g.generateAppCallInternal(appBoxesCreate, round, intra, 0, &hint)
+	actual, sgnTxns, appID, err := g.generateAppCallInternal(appBoxesCreate, round, intra, &hint)
+	_ = appID
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCreate, actual)
 
@@ -266,7 +274,8 @@ func TestAppCreate(t *testing.T) {
 
 	// app call transaction creating appSwap
 	intra = 1
-	actual, sgnTxns, err = g.generateAppCallInternal(appSwapCreate, round, intra, 0, &hint)
+	actual, sgnTxns, appID, err = g.generateAppCallInternal(appSwapCreate, round, intra, &hint)
+	_ = appID
 	require.NoError(t, err)
 	require.Equal(t, appSwapCreate, actual)
 
@@ -309,7 +318,8 @@ func TestAppBoxesOptin(t *testing.T) {
 	hint := appData{creator: 7}
 
 	// app call transaction opting into boxes gets replaced by creating appBoxes
-	actual, sgnTxns, err := g.generateAppCallInternal(appBoxesOptin, round, intra, 0, &hint)
+	actual, sgnTxns, appID, err := g.generateAppCallInternal(appBoxesOptin, round, intra, &hint)
+	_ = appID
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCreate, actual)
 
@@ -346,7 +356,8 @@ func TestAppBoxesOptin(t *testing.T) {
 	intra += 1
 	hint.creator = 8
 
-	actual, sgnTxns, err = g.generateAppCallInternal(appBoxesOptin, round, intra, 0, &hint)
+	actual, sgnTxns, appID, err = g.generateAppCallInternal(appBoxesOptin, round, intra, &hint)
+	_ = appID
 	require.NoError(t, err)
 	require.Equal(t, appBoxesOptin, actual)
 
@@ -391,7 +402,8 @@ func TestAppBoxesOptin(t *testing.T) {
 	// 3rd attempt to optin gets replaced by vanilla app call
 	intra += numTxns
 
-	actual, sgnTxns, err = g.generateAppCallInternal(appBoxesOptin, round, intra, 0, &hint)
+	actual, sgnTxns, appID, err = g.generateAppCallInternal(appBoxesOptin, round, intra, &hint)
+	_ = appID
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCall, actual)
 
