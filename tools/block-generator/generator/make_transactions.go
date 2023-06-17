@@ -140,16 +140,27 @@ func (g *generator) makeAppCreateTxn(kind appKind, sender basics.Address, round,
 		NumByteSlice: 32,
 	}
 
+	createTxFee := g.params.MinTxnFee
+	senderIndex := accountToIndex(sender)
+
+	// TODO: should check for min balance
+	g.balances[senderIndex] -= createTxFee
 	if kind != appKindBoxes {
 		return txntest.Group(&createTxn)
 	}
 
 	// also group in a pay txn to fund the app
+	pstFee := uint64(1_000)
+	pstAmt := uint64(1_000_000)
+
 	paySibTxn := g.makeTestTxn(sender, round, intra)
 	paySibTxn.Type = protocol.PaymentTx
 	paySibTxn.Receiver = basics.AppIndex(futureAppId).Address()
-	paySibTxn.Fee = basics.MicroAlgos{Raw: 1_000}
-	paySibTxn.Amount = uint64(1_000_000)
+	paySibTxn.Fee = basics.MicroAlgos{Raw: pstFee}
+	paySibTxn.Amount = uint64(pstAmt)
+
+	// TODO: should check for min balance}
+	g.balances[senderIndex] -= (pstFee + pstAmt)
 
 	return txntest.Group(&createTxn, &paySibTxn)
 }
@@ -178,11 +189,20 @@ func (g *generator) makeAppOptinTxn(sender basics.Address, round, intra uint64, 
 	}
 
 	// TODO: these may not make sense for the swap optin
+
+	pstFee := uint64(2_000)
+	pstAmt := uint64(1_000_000)
+
 	paySibTxn := g.makeTestTxn(sender, round, intra)
 	paySibTxn.Type = protocol.PaymentTx
 	paySibTxn.Receiver = basics.AppIndex(appIndex).Address()
-	paySibTxn.Fee = basics.MicroAlgos{Raw: 2_000}
-	paySibTxn.Amount = uint64(1_000_000)
+	paySibTxn.Fee = basics.MicroAlgos{Raw: pstFee}
+	paySibTxn.Amount = uint64(pstAmt)
+
+	senderIndex := accountToIndex(sender)
+	// TODO: should check for min balance}
+	// TODO: for the case of boxes, should refund 0.76 algo
+	g.balances[senderIndex] -= (pstFee + pstAmt)
 
 	return txntest.Group(&optInTxn, &paySibTxn)
 }
@@ -200,6 +220,11 @@ func (g *generator) makeAppCallTxn(sender basics.Address, round, intra, appIndex
 	callTxn.Boxes = []txn.BoxRef{
 		{Name: crypto.Digest(sender).ToSlice()},
 	}
+
+	// TODO: should check for min balance
+	appCallTxFee := g.params.MinTxnFee
+	senderIndex := accountToIndex(sender)
+	g.balances[senderIndex] -= appCallTxFee
 
 	return callTxn.Txn()
 }

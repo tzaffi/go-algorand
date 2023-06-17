@@ -148,11 +148,6 @@ type assetHolding struct {
 	balance   uint64
 }
 
-type appHolding struct {
-	appIndex uint64
-	// TODO: more data, not sure yet exactly what
-}
-
 // Report is the generation report.
 type Report map[TxTypeID]TxData
 

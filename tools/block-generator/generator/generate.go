@@ -397,13 +397,12 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 			UpgradeState: bookkeeping.UpgradeState{
 				CurrentProtocol: g.protocol,
 			},
-			UpgradeVote: bookkeeping.UpgradeVote{},
-			// TxnCounter:         g.txnCounter + numTxnForBlock,
+			UpgradeVote:        bookkeeping.UpgradeVote{},
 			StateProofTracking: nil,
 		}
 
 		// Generate the transactions
-		transactions := make([]txn.SignedTxnInBlock, 0, numTxnForBlock)
+		transactions := []txn.SignedTxnInBlock{}
 		for intra < numTxnForBlock {
 			var signedTxns []txn.SignedTxn
 			var ads []txn.ApplyData
@@ -438,15 +437,19 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 		cert.Block.Payset = transactions
 		cert.Certificate = agreement.Certificate{} // empty certificate for clarity
 
+		var errs []error
 		err := g.ledger.AddBlock(cert.Block, cert.Certificate)
 		if err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("error in AddBlock: %w", err))
 		}
 		if g.verbose {
-			err := g.introspectLedgerVsGenerator(g.round, intra)
-			if err != nil {
-				return fmt.Errorf("introspecting ledger resulted in an error: %w", err)
+			errs2 := g.introspectLedgerVsGenerator(g.round, intra)
+			if errs2 != nil {
+				errs = append(errs, errs2...)
 			}
+		}
+		if len(errs) > 0 {
+			return fmt.Errorf("%d error(s): %v", len(errs), errs)
 		}
 	}
 	cert.Block.BlockHeader.Round = basics.Round(round)
@@ -919,12 +922,14 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn,
 	return signedTxns, ads, intra, appID, nil
 }
 
+// generateAppCallInternal is the main workhorse for generating app transactions.
+// Senders are always genesis accounts, to avoid running out of funds.
 func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64, hintApp *appData) (TxTypeID, []txn.SignedTxn, uint64 /* appID */, error) {
 	var senderIndex uint64
 	if hintApp != nil {
 		senderIndex = hintApp.sender
 	} else {
-		senderIndex = rand.Uint64() % g.numAccounts
+		senderIndex = rand.Uint64() % g.config.NumGenesisAccounts
 	}
 	senderAcct := indexToAccount(senderIndex)
 
@@ -990,13 +995,6 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64
 	default:
 		return "", nil, appID, fmt.Errorf("unimplemented: invalid transaction type <%s> for app %d", appCallType, appID)
 	}
-
-	// TODO: this fee calculation isn't correct for most app calls:
-	txnFee := g.calculateTxnFee(txType)
-	if g.balances[senderIndex] < txnFee {
-		return "", nil, appID, fmt.Errorf("the sender account does not have enough algos for the app call. idx %d, app transaction type %v, num %d", senderIndex, txType, g.reportData[txType].GenerationCount)
-	}
-	g.balances[senderIndex] -= txnFee
 
 	return actual, signedTxns, appID, nil
 }
@@ -1202,16 +1200,18 @@ func reSignTxns(signedTxns []txn.SignedTxn) {
 	}
 }
 
-func (g *generator) introspectLedgerVsGenerator(roundNumber, intra uint64) error {
+func (g *generator) introspectLedgerVsGenerator(roundNumber, intra uint64) (errs []error) {
 	round := basics.Round(roundNumber)
 	block, err := g.ledger.Block(round)
 	if err != nil {
-		return err
+		round = err.(ledgercore.ErrNoEntry).Committed
+		fmt.Printf("WARNING: inconsistent generator v. ledger state. Reset round=%d: %v\n", round, err)
+		errs = append(errs, err)
 	}
 
 	ledgerStateDeltas, err := g.ledger.GetStateDeltaForRound(round)
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	cumulative := make(map[TxTypeID]uint64)
@@ -1228,6 +1228,7 @@ func (g *generator) introspectLedgerVsGenerator(roundNumber, intra uint64) error
 	}
 	fmt.Print("--------------------\n")
 	fmt.Printf("roundNumber (generator): %d\n", roundNumber)
+	fmt.Printf("round (ledger): %d\n", round)
 	fmt.Printf("g.txnCounter + intra: %d\n", g.txnCounter+intra)
 	fmt.Printf("block.BlockHeader.TxnCounter: %d\n", block.BlockHeader.TxnCounter)
 	fmt.Printf("len(g.latestPaysetWithExpectedID): %d\n", len(g.latestPaysetWithExpectedID))
@@ -1327,5 +1328,5 @@ func (g *generator) introspectLedgerVsGenerator(roundNumber, intra uint64) error
 	fmt.Printf("generatorExpectedCreatablesNotFound: %+v\n", generatorExpectedCreatablesNotFound)
 	fmt.Printf("ledgerBoxOptinsUnexpected: %+v\n", ledgerBoxOptinsUnexpected)
 	fmt.Printf("expectedOptinsNotFound: %+v\n", generatorExpectedOptinsNotFound)
-	return nil
+	return errs
 }
