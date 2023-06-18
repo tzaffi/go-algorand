@@ -954,6 +954,7 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64
 		for k := range g.appMap {
 			if g.appMap[k][appID] != nil {
 				return "", nil, appID, fmt.Errorf("should never happen! app %d already exists for kind %s", appID, k)
+			}
 			if g.pendingAppMap[k][appID] != nil {
 				return "", nil, appID, fmt.Errorf("should never happen! app %d already pending for kind %s", appID, k)
 			}
