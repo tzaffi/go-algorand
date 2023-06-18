@@ -122,7 +122,14 @@ func (g *generator) makeAssetAcceptanceTxn(header txn.Header, index uint64) txn.
 
 // ---- application transactions ----
 
-func (g *generator) makeAppCreateTxn(kind appKind, sender basics.Address, round, intra uint64, approval, clear string, futureAppId uint64) []txn.SignedTxn {
+func (g *generator) makeAppCreateTxn(kind appKind, sender basics.Address, round, intra uint64, futureAppId uint64) []txn.SignedTxn {
+	var approval, clear string
+	if kind == appKindSwap {
+		approval, clear = approvalSwap, clearSwap
+	} else {
+		approval, clear = approvalBoxes, clearBoxes
+	}
+
 	createTxn := g.makeTestTxn(sender, round, intra)
 
 	createTxn.Type = protocol.ApplicationCallTx

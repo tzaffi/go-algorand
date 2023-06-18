@@ -943,14 +943,8 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64
 	var signedTxns []txn.SignedTxn
 	switch appCallType {
 	case appTxTypeCreate:
-		var approval, clear string
-		if kind == appKindSwap {
-			approval, clear = approvalSwap, clearSwap
-		} else {
-			approval, clear = approvalBoxes, clearBoxes
-		}
 		appID = g.txnCounter + intra + 1
-		signedTxns = g.makeAppCreateTxn(kind, senderAcct, round, intra, approval, clear, appID)
+		signedTxns = g.makeAppCreateTxn(kind, senderAcct, round, intra, appID)
 		reSignTxns(signedTxns)
 
 		for k := range g.appMap {
