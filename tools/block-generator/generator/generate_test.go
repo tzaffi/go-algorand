@@ -142,6 +142,7 @@ func TestAssetOptinEveryAccountOverride(t *testing.T) {
 
 	// The next optin closes instead
 	actual, txn, assetID = g.generateAssetTxnInternal(assetOptin, 3, 0)
+	require.Greater(t, assetID, uint64(0))
 	g.finishRound()
 	require.Equal(t, assetClose, actual)
 	require.Equal(t, protocol.AssetTransferTx, txn.Type)
