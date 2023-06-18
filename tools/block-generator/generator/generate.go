@@ -898,7 +898,7 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn,
 	}
 
 	if _, ok := effects[actual]; ok {
-		txCount, err := g.recordIncludingEffects(actual, start)
+		txCount, err := g.countAndRecordEffects(actual, start)
 		intra += txCount
 		if err != nil {
 			return nil, nil, intra, appID, fmt.Errorf("failed to record app transaction %s: %w", actual, err)
@@ -1098,7 +1098,7 @@ func (g *generator) recordOccurrences(id TxTypeID, count uint64, start time.Time
 	g.reportData[id] = data
 }
 
-func (g *generator) recordIncludingEffects(id TxTypeID, start time.Time) (uint64, error) {
+func (g *generator) countAndRecordEffects(id TxTypeID, start time.Time) (uint64, error) {
 	g.recordData(id, start) // this may be a bug!!!
 	count := uint64(1)
 	if consequences, ok := effects[id]; ok {

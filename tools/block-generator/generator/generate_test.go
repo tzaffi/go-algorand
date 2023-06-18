@@ -399,7 +399,7 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, TxEffect{effectPaymentTxSibling, 1}, effects[actual][0])
 	require.Equal(t, TxEffect{effectInnerTx, 2}, effects[actual][1])
 
-	numTxns, err := g.recordIncludingEffects(actual, time.Now())
+	numTxns, err := g.countAndRecordEffects(actual, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, uint64(4), numTxns)
 
@@ -705,7 +705,7 @@ func TestRecordAppConsequences(t *testing.T) {
 	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
 
 	txTypeId := TxTypeID("test")
-	txCount, err := g.recordIncludingEffects(txTypeId, time.Now())
+	txCount, err := g.countAndRecordEffects(txTypeId, time.Now())
 	require.Error(t, err, "no effects for TxTypeId test")
 
 	// recordIncludingEffects always records the root txTypeId
@@ -716,7 +716,7 @@ func TestRecordAppConsequences(t *testing.T) {
 	require.Len(t, g.reportData, 1)
 
 	txTypeId = appBoxesOptin
-	txCount, err = g.recordIncludingEffects(txTypeId, time.Now())
+	txCount, err = g.countAndRecordEffects(txTypeId, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, uint64(4), txCount)
 
