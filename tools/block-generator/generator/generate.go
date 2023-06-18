@@ -368,7 +368,10 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 	}
 	// round == nextRound case
 
-	g.startRound()
+	err := g.startRound()
+	if err != nil {
+		return err
+	}
 	numTxnForBlock := g.txnForRound(g.round)
 
 	var intra uint64 = 0
@@ -454,7 +457,7 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 
 	// write the msgpack bytes for a block
 	g.latestBlockMsgp = protocol.EncodeMsgp(&cert)
-	_, err := output.Write(g.latestBlockMsgp)
+	_, err = output.Write(g.latestBlockMsgp)
 	if err != nil {
 		return err
 	}
@@ -1123,17 +1126,18 @@ func (g *generator) txnForRound(round uint64) uint64 {
 
 // startRound updates the generator's txnCounter based on the latest block header.
 // It is assumed that g.round has already been incremented in finishRound()
-func (g *generator) startRound() {
+func (g *generator) startRound() error {
 	if g.round == 0 {
 		// nothing to do in round 0
-		return
+		return nil
 	}
 
 	latestHeader, err := g.ledger.BlockHdr(basics.Round(g.round - 1))
 	if err != nil {
-		panic(fmt.Sprintf("\n\nCould not obtain block header for round %d: %v\n\n", g.round, err))
+		return fmt.Errorf("Could not obtain block header for round %d: %w", g.round, err)
 	}
 	g.txnCounter = latestHeader.TxnCounter
+	return nil
 }
 
 // finishRound tells the generator it can apply any pending state and updates its round
