@@ -108,6 +108,8 @@ type generator struct {
 
 	// Reporting information from transaction type to data
 	reportData Report
+	// latestData keeps a count of how many transactions of each
+	// txType occurred in the current round.
 	latestData map[TxTypeID]uint64
 
 	// ledger
