@@ -1081,10 +1081,6 @@ func (g *generator) getActualAppCall(txType TxTypeID, senderIndex uint64) (TxTyp
 	return txType, kind, appTxType, appID, nil
 }
 
-func (g *generator) calculateTxnFee(txType TxTypeID) uint64 {
-	return g.params.MinTxnFee
-}
-
 // ---- metric data recorders ----
 
 func track(id TxTypeID) (TxTypeID, time.Time) {
