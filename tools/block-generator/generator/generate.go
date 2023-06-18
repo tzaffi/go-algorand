@@ -413,16 +413,15 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 				panic(fmt.Sprintf("failed to generate transaction: %v\n", err))
 			}
 			if len(signedTxns) == 0 {
-				panic("failed to generate transaction: no transactions given\n")
+				return fmt.Errorf("failed to generate transaction: no transactions given")
 			}
 			if len(signedTxns) != len(ads) {
-				panic(fmt.Sprintf("failed to generate transaction: mismatched number of signed transactions (%d) and apply data (%d\n", len(signedTxns), len(ads)))
+				return fmt.Errorf("failed to generate transaction: mismatched number of signed transactions (%d) and apply data (%d)", len(signedTxns), len(ads))
 			}
 			for i, stx := range signedTxns {
 				stib, err := cert.Block.BlockHeader.EncodeSignedTxn(stx, ads[i])
 				if err != nil {
-					// return err
-					panic(fmt.Sprintf("failed to encode transaction: %v\n", err))
+					return fmt.Errorf("failed to encode transaction: %w", err)
 				}
 				transactions = append(transactions, stib)
 			}
@@ -430,7 +429,6 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 
 		if intra < numTxnForBlock {
 			return fmt.Errorf("not enough transactions generated: %d > %d", numTxnForBlock, intra)
-			// panic("Unexpected number of transactions.")
 		}
 
 		cert.Block.BlockHeader.TxnCounter = g.txnCounter + intra
@@ -611,17 +609,14 @@ func (g *generator) generateSignedTxns(round uint64, intra uint64) ([]txn.Signed
 		signedTxn, ad, nextIntra, err = g.generatePaymentTxn(round, intra)
 		signedTxns = []txn.SignedTxn{signedTxn}
 		ads = []txn.ApplyData{ad}
-		// return []txn.SignedTxn{signedTxn}, []txn.ApplyData{ad}, nextIntra, err
 	case assetTx:
 		var signedTxn txn.SignedTxn
 		var ad txn.ApplyData
 		signedTxn, ad, nextIntra, expectedID, err = g.generateAssetTxn(round, intra)
 		signedTxns = []txn.SignedTxn{signedTxn}
 		ads = []txn.ApplyData{ad}
-		// return []txn.SignedTxn{signedTxn}, []txn.ApplyData{ad}, nextIntra, err
 	case applicationTx:
 		signedTxns, ads, nextIntra, expectedID, err = g.generateAppTxn(round, intra)
-		// return signedTxns, ads, nextIntra, err
 	default:
 		return nil, nil, intra, fmt.Errorf("no generator available for %s", selection)
 	}
@@ -909,7 +904,7 @@ func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn,
 		if err != nil {
 			return nil, nil, intra, appID, fmt.Errorf("failed to record app transaction %s: %w", actual, err)
 		}
-	} else {
+	} else { // no effects for actual, so exactly 1 transaction
 		g.recordData(actual, start)
 		intra++
 	}
@@ -959,6 +954,8 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64
 		for k := range g.appMap {
 			if g.appMap[k][appID] != nil {
 				return "", nil, appID, fmt.Errorf("should never happen! app %d already exists for kind %s", appID, k)
+			if g.pendingAppMap[k][appID] != nil {
+				return "", nil, appID, fmt.Errorf("should never happen! app %d already pending for kind %s", appID, k)
 			}
 		}
 
@@ -1000,9 +997,11 @@ func (g *generator) generateAppCallInternal(txType TxTypeID, round, intra uint64
 }
 
 func (g *generator) getAppData(existing bool, kind appKind, senderIndex, appID uint64) (*appData, bool /* appInMap */, bool /* senderOptedin */) {
-	appMapOrPendingAppMap := g.pendingAppMap
+	var appMapOrPendingAppMap map[appKind]map[uint64]*appData
 	if existing {
 		appMapOrPendingAppMap = g.appMap
+	} else {
+		appMapOrPendingAppMap = g.pendingAppMap
 	}
 
 	ad, ok := appMapOrPendingAppMap[kind][appID]
@@ -1010,18 +1009,18 @@ func (g *generator) getAppData(existing bool, kind appKind, senderIndex, appID u
 		return nil, false, false
 	}
 	if !ad.optins[senderIndex] {
-		return nil, true, false
+		return ad, true, false
 	}
 	return ad, true, true
 }
 
 // getActualAppCall returns the actual transaction type, app kind, app transaction type and appID
-// * it keeps the txType if there aren't any problems (for example create always is kept)
+// * it returns actual = txType if there aren't any problems (for example create always is kept)
 // * it creates the app if the app of the given kind doesn't exist
-// * it switches to noopoc instead of optin when already opted in in existing apps
-// * it switches to create instead of optin when already opted in in pending apps
+// * it switches to noopoc instead of optin when already opted into existing apps
+// * it switches to create instead of optin when only opted into pending apps
 // * it switches to optin when noopoc if not opted in and follows the logic of the optins above
-// * the appID is 0 for creates, and otherwise a randome appID from the existing apps for the kind
+// * the appID is 0 for creates, and otherwise a random appID from the existing apps for the kind
 func (g *generator) getActualAppCall(txType TxTypeID, senderIndex uint64) (TxTypeID, appKind, appTxType, uint64 /* appID */, error) {
 	isApp, kind, appTxType, err := parseAppTxType(txType)
 	if err != nil {
@@ -1082,8 +1081,6 @@ func (g *generator) getActualAppCall(txType TxTypeID, senderIndex uint64) (TxTyp
 }
 
 func (g *generator) calculateTxnFee(txType TxTypeID) uint64 {
-	// TODO: this isn't correct for general app calls. It should depend on
-	// the `effects` map.
 	return g.params.MinTxnFee
 }
 
@@ -1128,7 +1125,7 @@ func (g *generator) txnForRound(round uint64) uint64 {
 	return g.config.TxnPerBlock
 }
 
-// startRound updates the generator's txnCounter based on its latest block header.
+// startRound updates the generator's txnCounter based on the latest block header.
 // It is assumed that g.round has already been incremented in finishRound()
 func (g *generator) startRound() {
 	if g.round == 0 {

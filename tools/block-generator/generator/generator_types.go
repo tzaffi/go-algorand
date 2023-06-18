@@ -41,7 +41,6 @@ type Generator interface {
 }
 
 type generator struct {
-	// TODO: receive this as a parameter
 	verbose bool
 
 	config GenerationConfig
@@ -54,7 +53,6 @@ type generator struct {
 
 	// Block stuff
 	round uint64
-	// currentAppID  uint64
 	txnCounter    uint64
 	prevBlockHash string
 	timestamp     int64
@@ -84,25 +82,23 @@ type generator struct {
 	pendingAssets []*assetData
 
 	// pendingAppMap provides a live mapping from appID to appData for each appKind
+	// for the current round
 	pendingAppMap map[appKind]map[uint64]*appData
 
 	// pendingAppSlice provides a live slice of appData for each appKind. The reason
 	// for maintaining both appMap and pendingAppSlice is to enable
-	// random selection of apps to interact with.
+	// randomly selecting an app to interact with and yet easily access it once
+	// its identifier is known
 	pendingAppSlice map[appKind][]*appData
 
 	// appMap and appSlice store the information from their corresponding pending*
-	// data structures at the end of each round
+	// data structures at the end of each round and for the rest of the experiment
 	appMap   map[appKind]map[uint64]*appData
 	appSlice map[appKind][]*appData
 
 	// accountAppOptins is used to keep track of which accounts have opted into
-	// for ease in random selection.
+	// and app and enable random selection.
 	accountAppOptins map[appKind]map[uint64][]uint64
-
-	// // pendingApps is used to hold newly created apps so that they are not used before
-	// // being created.
-	// pendingApps map[appKind][]*appData
 
 	transactionWeights []float32
 
