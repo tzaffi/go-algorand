@@ -413,7 +413,7 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 			signedTxns, ads, intra, err = g.generateSignedTxns(g.round, intra)
 			if err != nil {
 				// return err
-				panic(fmt.Sprintf("failed to generate transaction: %v\n", err))
+				return fmt.Errorf("failed to generate transaction: %w", err)
 			}
 			if len(signedTxns) == 0 {
 				return fmt.Errorf("failed to generate transaction: no transactions given")
