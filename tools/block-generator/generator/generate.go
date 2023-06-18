@@ -679,7 +679,6 @@ func (g *generator) generatePaymentTxnInternal(selection TxTypeID, round uint64,
 	// Select a sender from genesis account
 	sendIndex := g.numPayments % g.config.NumGenesisAccounts
 	if g.balances[sendIndex] < (total + minBal) {
-		// TODO: shouldn't we just return an error?
 		fmt.Printf("\n\ngeneratePaymentTxnInternal(): the sender account does not have enough algos for the transfer. idx %d, payment number %d\n\n", sendIndex, g.numPayments)
 		os.Exit(1)
 	}
@@ -708,7 +707,6 @@ func (g *generator) generateAssetTxn(round uint64, intra uint64) (txn.SignedTxn,
 	actual, transaction, assetID := g.generateAssetTxnInternal(selection.(TxTypeID), round, intra)
 	defer g.recordData(actual, start)
 
-	// TODO: shouldn't we just return an error?
 	if transaction.Type == "" {
 		fmt.Println("Empty asset transaction.")
 		os.Exit(1)
@@ -875,8 +873,9 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 	}
 
 	if assetID == 0 {
-		panic(fmt.Sprintf("\n\nassetID is 0 but should have been set by \ngenerateAssetTxnInternalHint(txType=%s, round=%d, intra=%d, hintIndex=%d, hintIsNil=%t)\nactual=%s\n\n",
-			txType, round, intra, hintIndex, hint == nil, actual))
+		fmt.Printf("\n\nassetID is 0 but should have been set by \ngenerateAssetTxnInternalHint(txType=%s, round=%d, intra=%d, hintIndex=%d, hintIsNil=%t)\nactual=%s\n\n",
+			txType, round, intra, hintIndex, hint == nil, actual)
+		os.Exit(1)
 	}
 
 	g.balances[senderIndex] -= txn.Fee.ToUint64()
