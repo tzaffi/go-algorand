@@ -54,21 +54,21 @@ const (
 
 	// App Swap TX Distribution / ID's
 	appSwapOuterCreate TxTypeID = "app_swapouter_create"
-	appSwapOuterUpdate TxTypeID = "app_swapouter_update"
-	appSwapOuterDelete TxTypeID = "app_swapouter_delete"
-	appSwapOuterOptin  TxTypeID = "app_swapouter_optin"
-	appSwapOuterCall   TxTypeID = "app_swapouter_call"
-	appSwapOuterClose  TxTypeID = "app_swapouter_close"
-	appSwapOuterClear  TxTypeID = "app_swapouter_clear"
+	// appSwapOuterUpdate TxTypeID = "app_swapouter_update"
+	// appSwapOuterDelete TxTypeID = "app_swapouter_delete"
+	appSwapOuterOptin TxTypeID = "app_swapouter_optin"
+	appSwapOuterCall  TxTypeID = "app_swapouter_call"
+	// appSwapOuterClose  TxTypeID = "app_swapouter_close"
+	// appSwapOuterClear  TxTypeID = "app_swapouter_clear"
 
 	// App Boxes TX Distribution / ID's
 	appBoxesCreate TxTypeID = "app_boxes_create"
-	appBoxesUpdate TxTypeID = "app_boxes_update"
-	appBoxesDelete TxTypeID = "app_boxes_delete"
-	appBoxesOptin  TxTypeID = "app_boxes_optin"
-	appBoxesCall   TxTypeID = "app_boxes_call"
-	appBoxesClose  TxTypeID = "app_boxes_close"
-	appBoxesClear  TxTypeID = "app_boxes_clear"
+	// appBoxesUpdate TxTypeID = "app_boxes_update"
+	// appBoxesDelete TxTypeID = "app_boxes_delete"
+	appBoxesOptin TxTypeID = "app_boxes_optin"
+	appBoxesCall  TxTypeID = "app_boxes_call"
+	// appBoxesClose  TxTypeID = "app_boxes_close"
+	// appBoxesClear  TxTypeID = "app_boxes_clear"
 
 	// Special TxTypeID's recording effects of higher level transactions
 	effectPaymentTxSibling TxTypeID = "effect_payment_sibling"
@@ -109,30 +109,30 @@ type appTxType uint8
 
 const (
 	appTxTypeCreate appTxType = iota
-	appTxTypeUpdate
-	appTxTypeDelete
+	// appTxTypeUpdate
+	// appTxTypeDelete
 	appTxTypeOptin
 	appTxTypeCall
-	appTxTypeClose
-	appTxTypeClear
+	// appTxTypeClose
+	// appTxTypeClear
 )
 
 func (a appTxType) String() string {
 	switch a {
 	case appTxTypeCreate:
 		return "create"
-	case appTxTypeUpdate:
-		return "update"
-	case appTxTypeDelete:
-		return "delete"
+	// case appTxTypeUpdate:
+	// 	return "update"
+	// case appTxTypeDelete:
+	// 	return "delete"
 	case appTxTypeOptin:
 		return "optin"
 	case appTxTypeCall:
 		return "call"
-	case appTxTypeClose:
-		return "close"
-	case appTxTypeClear:
-		return "clear"
+	// case appTxTypeClose:
+	// 	return "close"
+	// case appTxTypeClear:
+	// 	return "clear"
 	default:
 		// Return a default value for unknown types.
 		return "Unknown"
@@ -163,18 +163,18 @@ func parseAppTxType(txType TxTypeID) (isApp bool, kind appKind, tx appTxType, er
 		switch parts[2] {
 		case "create":
 			tx = appTxTypeCreate
-		case "update":
-			tx = appTxTypeUpdate
-		case "delete":
-			tx = appTxTypeDelete
+		// case "update":
+		// 	tx = appTxTypeUpdate
+		// case "delete":
+		// 	tx = appTxTypeDelete
 		case "optin":
 			tx = appTxTypeOptin
 		case "call":
 			tx = appTxTypeCall
-		case "close":
-			tx = appTxTypeClose
-		case "clear":
-			tx = appTxTypeClear
+		// case "close":
+		// 	tx = appTxTypeClose
+		// case "clear":
+		// 	tx = appTxTypeClear
 		default:
 			err = fmt.Errorf("invalid app tx type")
 			return
@@ -222,21 +222,23 @@ type GenerationConfig struct {
 
 	// App Swap TX Distribution
 	AppSwapOuterCreateFraction float32 `yaml:"app_swapouter_create_fraction"`
-	AppSwapOuterUpdateFraction float32 `yaml:"app_swapouter_update_fraction"`
-	AppSwapOuterDeleteFraction float32 `yaml:"app_swapouter_delete_fraction"`
 	AppSwapOuterOptinFraction  float32 `yaml:"app_swapouter_optin_fraction"`
 	AppSwapOuterCallFraction   float32 `yaml:"app_swapouter_call_fraction"`
-	AppSwapOuterCloseFraction  float32 `yaml:"app_swapouter_close_fraction"`
-	AppSwapOuterClearFraction  float32 `yaml:"app_swapouter_clear_fraction"`
+
+	// TODO: implement more
+	// AppSwapOuterUpdateFraction float32 `yaml:"app_swapouter_update_fraction"`
+	// AppSwapOuterDeleteFraction float32 `yaml:"app_swapouter_delete_fraction"`
+	// AppSwapOuterCloseFraction  float32 `yaml:"app_swapouter_close_fraction"`
+	// AppSwapOuterClearFraction  float32 `yaml:"app_swapouter_clear_fraction"`
 
 	// App Boxes TX Distribution
 	AppBoxesCreateFraction float32 `yaml:"app_boxes_create_fraction"`
-	AppBoxesUpdateFraction float32 `yaml:"app_boxes_update_fraction"`
-	AppBoxesDeleteFraction float32 `yaml:"app_boxes_delete_fraction"`
 	AppBoxesOptinFraction  float32 `yaml:"app_boxes_optin_fraction"`
 	AppBoxesCallFraction   float32 `yaml:"app_boxes_call_fraction"`
-	AppBoxesCloseFraction  float32 `yaml:"app_boxes_close_fraction"`
-	AppBoxesClearFraction  float32 `yaml:"app_boxes_clear_fraction"`
+	// AppBoxesUpdateFraction float32 `yaml:"app_boxes_update_fraction"`
+	// AppBoxesDeleteFraction float32 `yaml:"app_boxes_delete_fraction"`
+	// AppBoxesCloseFraction  float32 `yaml:"app_boxes_close_fraction"`
+	// AppBoxesClearFraction  float32 `yaml:"app_boxes_clear_fraction"`
 }
 
 // ---- construction and validation ----
@@ -305,12 +307,12 @@ func (cfg *GenerationConfig) validateWithDefaults(defaults bool) error {
 		return fmt.Errorf("app configuration ratios sum should equal 1: %w", eAppTypes)
 	}
 
-	weights = []*float32{&cfg.AppSwapOuterCreateFraction, &cfg.AppSwapOuterUpdateFraction, &cfg.AppSwapOuterDeleteFraction, &cfg.AppSwapOuterOptinFraction, &cfg.AppSwapOuterCallFraction, &cfg.AppSwapOuterCloseFraction, &cfg.AppSwapOuterClearFraction}
+	weights = []*float32{&cfg.AppSwapOuterCreateFraction, &cfg.AppSwapOuterCallFraction}
 	if eAppSwapOuterTypes := sumIsCloseToOneWithDefault(defaults, weights...); eAppSwapOuterTypes != nil {
 		return fmt.Errorf("app swap outer configuration ratios sum should equal 1: %w", eAppSwapOuterTypes)
 	}
 
-	weights = []*float32{&cfg.AppBoxesCreateFraction, &cfg.AppBoxesUpdateFraction, &cfg.AppBoxesDeleteFraction, &cfg.AppBoxesOptinFraction, &cfg.AppBoxesCallFraction, &cfg.AppBoxesCloseFraction, &cfg.AppBoxesClearFraction}
+	weights = []*float32{&cfg.AppBoxesCreateFraction, &cfg.AppBoxesOptinFraction, &cfg.AppBoxesCallFraction}
 	if eAppBoxesTypes := sumIsCloseToOneWithDefault(defaults, weights...); eAppBoxesTypes != nil {
 		return fmt.Errorf("app boxes configuration ratios sum should equal 1: %w", eAppBoxesTypes)
 

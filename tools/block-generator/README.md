@@ -41,22 +41,14 @@ app_swapouter_fraction: 0.5
 app_boxes_fraction: 0.5
 
 # app_swap config
-app_swapouter_create_fraction: 0.001
-app_swapouter_update_fraction: 0.001
-app_swapouter_delete_fraction: 0
-app_swapouter_optin_fraction: 0.1
+app_swapouter_create_fraction: 0.01
+app_swapouter_optin_fraction: 0.01
 app_swapouter_call_fraction: 0.98
-app_swapouter_close_fraction: 0.005
-app_swapouter_clear_fraction: 0.003
 
 # app_boxes config
-app_boxes_create_fraction: 0.001
-app_boxes_update_fraction: 0.001
-app_boxes_delete_fraction: 0
-app_boxes_optin_fraction: 0.1
+app_boxes_create_fraction: 0.01
+app_boxes_optin_fraction: 0.01
 app_boxes_call_fraction: 0.98
-app_boxes_close_fraction: 0.005
-app_boxes_clear_fraction: 0.003
 ```
 
 ## Modes

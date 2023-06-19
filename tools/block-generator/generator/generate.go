@@ -183,32 +183,32 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 		switch val {
 		case appSwapOuterCreate:
 			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterCreateFraction)
-		case appSwapOuterUpdate:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterUpdateFraction)
-		case appSwapOuterDelete:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterDeleteFraction)
+		// case appSwapOuterUpdate:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterUpdateFraction)
+		// case appSwapOuterDelete:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterDeleteFraction)
 		case appSwapOuterOptin:
 			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterOptinFraction)
 		case appSwapOuterCall:
 			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterCallFraction)
-		case appSwapOuterClose:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterCloseFraction)
-		case appSwapOuterClear:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterClearFraction)
+		// case appSwapOuterClose:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterCloseFraction)
+		// case appSwapOuterClear:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterClearFraction)
 		case appBoxesCreate:
 			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCreateFraction)
-		case appBoxesUpdate:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesUpdateFraction)
-		case appBoxesDelete:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesDeleteFraction)
+		// case appBoxesUpdate:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesUpdateFraction)
+		// case appBoxesDelete:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesDeleteFraction)
 		case appBoxesOptin:
 			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesOptinFraction)
 		case appBoxesCall:
 			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCallFraction)
-		case appBoxesClose:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCloseFraction)
-		case appBoxesClear:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesClearFraction)
+			// case appBoxesClose:
+			// 	gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCloseFraction)
+			// case appBoxesClear:
+			// 	gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesClearFraction)
 		}
 	}
 	if _, valid, err := validateSumCloseToOne(asPtrSlice(gen.appTxWeights)); err != nil || !valid {
@@ -587,8 +587,8 @@ func getAssetTxOptions() []interface{} {
 
 func getAppTxOptions() []interface{} {
 	return []interface{}{
-		appSwapOuterCreate, appSwapOuterUpdate, appSwapOuterDelete, appSwapOuterOptin, appSwapOuterCall, appSwapOuterClose, appSwapOuterClear,
-		appBoxesCreate, appBoxesUpdate, appBoxesDelete, appBoxesOptin, appBoxesCall, appBoxesClose, appBoxesClear,
+		appSwapOuterCreate, appSwapOuterOptin, appSwapOuterCall,
+		appBoxesCreate, appBoxesOptin, appBoxesCall,
 	}
 }
 
