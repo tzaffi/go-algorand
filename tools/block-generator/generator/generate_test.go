@@ -203,10 +203,10 @@ func TestAssetDestroy(t *testing.T) {
 }
 
 type assembledPrograms struct {
-	boxesApproval []byte
-	boxesClear    []byte
-	swapsApproval []byte
-	swapsClear    []byte
+	boxesApproval     []byte
+	boxesClear        []byte
+	swapOuterApproval []byte
+	swapOuterClear    []byte
 }
 
 func assembleApps(t *testing.T) assembledPrograms {
@@ -221,11 +221,11 @@ func assembleApps(t *testing.T) assembledPrograms {
 	ap.boxesClear = ops.Program
 	require.NoError(t, err)
 
-	ops, err = logic.AssembleString(approvalSwap)
-	ap.swapsApproval = ops.Program
+	ops, err = logic.AssembleString(approvalSwapOuter)
+	ap.swapOuterApproval = ops.Program
 	require.NoError(t, err)
-	ops, err = logic.AssembleString(clearSwap)
-	ap.swapsClear = ops.Program
+	ops, err = logic.AssembleString(clearSwapOuter)
+	ap.swapOuterClear = ops.Program
 	require.NoError(t, err)
 
 	return ap
@@ -262,9 +262,9 @@ func TestAppCreate(t *testing.T) {
 	require.Equal(t, transactions.NoOpOC, createTxn.ApplicationCallTxnFields.OnCompletion)
 
 	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
-	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
+	require.Len(t, g.pendingAppSlice[appKindSwapOuter], 0)
 	require.Len(t, g.pendingAppMap[appKindBoxes], 1)
-	require.Len(t, g.pendingAppMap[appKindSwap], 0)
+	require.Len(t, g.pendingAppMap[appKindSwapOuter], 0)
 	ad := g.pendingAppSlice[appKindBoxes][0]
 	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
 	require.Equal(t, hint.sender, ad.sender)
@@ -275,12 +275,12 @@ func TestAppCreate(t *testing.T) {
 	paySiblingTxn := sgnTxns[1].Txn
 	require.Equal(t, protocol.PaymentTx, paySiblingTxn.Type)
 
-	// app call transaction creating appSwap
+	// app call transaction creating appSwapOuter
 	intra = 1
-	actual, sgnTxns, appID, err = g.generateAppCallInternal(appSwapCreate, round, intra, &hint)
+	actual, sgnTxns, appID, err = g.generateAppCallInternal(appSwapOuterCreate, round, intra, &hint)
 	_ = appID
 	require.NoError(t, err)
-	require.Equal(t, appSwapCreate, actual)
+	require.Equal(t, appSwapOuterCreate, actual)
 
 	require.Len(t, sgnTxns, 1)
 	createTxn = sgnTxns[0].Txn
@@ -288,8 +288,8 @@ func TestAppCreate(t *testing.T) {
 	require.Equal(t, protocol.ApplicationCallTx, createTxn.Type)
 	require.Equal(t, indexToAccount(hint.sender), createTxn.Sender)
 	require.Equal(t, basics.AppIndex(0), createTxn.ApplicationCallTxnFields.ApplicationID)
-	require.Equal(t, assembled.swapsApproval, createTxn.ApplicationCallTxnFields.ApprovalProgram)
-	require.Equal(t, assembled.swapsClear, createTxn.ApplicationCallTxnFields.ClearStateProgram)
+	require.Equal(t, assembled.swapOuterApproval, createTxn.ApplicationCallTxnFields.ApprovalProgram)
+	require.Equal(t, assembled.swapOuterClear, createTxn.ApplicationCallTxnFields.ClearStateProgram)
 	require.Equal(t, uint64(32), createTxn.ApplicationCallTxnFields.GlobalStateSchema.NumByteSlice)
 	require.Equal(t, uint64(32), createTxn.ApplicationCallTxnFields.GlobalStateSchema.NumUint)
 	require.Equal(t, uint64(8), createTxn.ApplicationCallTxnFields.LocalStateSchema.NumByteSlice)
@@ -297,13 +297,13 @@ func TestAppCreate(t *testing.T) {
 	require.Equal(t, transactions.NoOpOC, createTxn.ApplicationCallTxnFields.OnCompletion)
 
 	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
-	require.Len(t, g.pendingAppSlice[appKindSwap], 1)
+	require.Len(t, g.pendingAppSlice[appKindSwapOuter], 1)
 	require.Len(t, g.pendingAppMap[appKindBoxes], 1)
-	require.Len(t, g.pendingAppMap[appKindSwap], 1)
-	ad = g.pendingAppSlice[appKindSwap][0]
-	require.Equal(t, ad, g.pendingAppMap[appKindSwap][ad.appID])
+	require.Len(t, g.pendingAppMap[appKindSwapOuter], 1)
+	ad = g.pendingAppSlice[appKindSwapOuter][0]
+	require.Equal(t, ad, g.pendingAppMap[appKindSwapOuter][ad.appID])
 	require.Equal(t, hint.sender, ad.sender)
-	require.Equal(t, appKindSwap, ad.kind)
+	require.Equal(t, appKindSwapOuter, ad.kind)
 	optins = ad.optins
 	require.Len(t, optins, 0)
 }
@@ -341,9 +341,9 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Nil(t, createTxn.ApplicationCallTxnFields.Boxes)
 
 	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
-	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
+	require.Len(t, g.pendingAppSlice[appKindSwapOuter], 0)
 	require.Len(t, g.pendingAppMap[appKindBoxes], 1)
-	require.Len(t, g.pendingAppMap[appKindSwap], 0)
+	require.Len(t, g.pendingAppMap[appKindSwapOuter], 0)
 	ad := g.pendingAppSlice[appKindBoxes][0]
 	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
 	require.Equal(t, hint.sender, ad.sender)
@@ -383,9 +383,9 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Equal(t, crypto.Digest(pay.Sender).ToSlice(), createTxn.ApplicationCallTxnFields.Boxes[0].Name)
 
 	require.Len(t, g.pendingAppSlice[appKindBoxes], 1)
-	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
+	require.Len(t, g.pendingAppSlice[appKindSwapOuter], 0)
 	require.Len(t, g.pendingAppMap[appKindBoxes], 1)
-	require.Len(t, g.pendingAppMap[appKindSwap], 0)
+	require.Len(t, g.pendingAppMap[appKindSwapOuter], 0)
 	ad = g.pendingAppSlice[appKindBoxes][0]
 	require.Equal(t, ad, g.pendingAppMap[appKindBoxes][ad.appID])
 	require.Equal(t, hint.sender, ad.sender) // NOT 8!!!
@@ -428,9 +428,9 @@ func TestAppBoxesOptin(t *testing.T) {
 
 	// no change to app states
 	require.Len(t, g.pendingAppSlice[appKindBoxes], 0)
-	require.Len(t, g.pendingAppSlice[appKindSwap], 0)
+	require.Len(t, g.pendingAppSlice[appKindSwapOuter], 0)
 	require.Len(t, g.pendingAppMap[appKindBoxes], 0)
-	require.Len(t, g.pendingAppMap[appKindSwap], 0)
+	require.Len(t, g.pendingAppMap[appKindSwapOuter], 0)
 
 	require.NotContains(t, effects, actual)
 }

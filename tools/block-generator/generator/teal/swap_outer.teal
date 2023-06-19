@@ -1,0 +1,465 @@
+// SOURCE: https://algoscan.app/app/1000469889
+#pragma version 7
+
+intcblock 0 1 4
+txn NumAppArgs
+intc_0 // 0
+==
+bnz label1 // APP MANAGER CASE: create/delete (and optin - added later)
+
+txna ApplicationArgs 0
+pushbytes 0x67c4469e // 0x67c4469e
+==
+bnz label2 // CASE I
+
+txna ApplicationArgs 0
+pushbytes 0xaa6d419d // 0xaa6d419d
+==
+bnz label3 // CASE II. this probably the swap case
+
+txna ApplicationArgs 0
+pushbytes 0x92e297a1 // 0x92e297a1
+==
+bnz label4 // CASE III
+
+txna ApplicationArgs 0
+pushbytes 0x99b36a95 // 0x99b36a95
+==
+bnz label5 // CASE IV. pay the creator with algos or an ASA from the app's account
+err
+
+label5: // IV. pay the app creator (with with algos or an ASA)
+
+	txn OnCompletion
+	intc_0 // 0
+	==
+	txn ApplicationID
+	intc_0 // 0
+	!=
+	&&
+	assert // must exist and be a NoOpOC
+
+	txna ApplicationArgs 1
+	intc_0 // 0
+	getbyte
+	store 5 // 5 -> arg1[0] == assetReference1
+
+	txna ApplicationArgs 2
+	btoi
+	store 6 // 6 -> arg2 == assetAmount
+
+	load 5
+	load 6
+	// next, pay the app creator with algos or an ASA
+	callsub label6 // stack-> assetRef1, assetAmount???
+
+	intc_1 // 1
+	return
+
+label4:
+
+	txn OnCompletion
+	intc_0 // 0
+	==
+	txn ApplicationID
+	intc_0 // 0
+	!=
+	&&
+	assert
+
+	txna ApplicationArgs 1
+	intc_0 // 0
+	getbyte
+	callsub label7
+
+	intc_1 // 1
+	return
+
+label3:
+
+	txn OnCompletion
+	intc_0 // 0
+	==
+	txn ApplicationID
+	intc_0 // 0
+	!=
+	&&
+	assert
+
+	txna ApplicationArgs 1
+	intc_0 // 0
+	getbyte
+	store 4
+
+	txn GroupIndex
+	intc_1 // 1
+	-
+	store 3
+
+	load 3
+	gtxns TypeEnum
+	intc_1 // 1
+	==
+	assert
+
+	load 3
+	load 4
+	callsub label8
+
+	intc_1 // 1
+	return
+
+// I.
+label2: // CASE I
+
+	txn OnCompletion
+	intc_0 // 0
+	==
+	txn ApplicationID
+	intc_0 // 0
+	!=
+	&&
+	assert // NoOpOC and app already exists
+
+	txna ApplicationArgs 1
+	intc_0 // 0
+	getbyte
+	store 0  // 0 -> arg1[0] == assetReference1
+
+	txna ApplicationArgs 2
+	intc_0 // 0
+	getbyte
+	store 1  // 1 -> arg2[0] == assetReference2
+
+	txna ApplicationArgs 3
+	store 2  // 2 -> arg3 == ABI:(appID,amount)
+
+	load 0
+	load 1
+	load 2	 // stack->aref1, aref2, ABI:(appID,amount)
+	callsub label9
+
+	intc_1 // 1
+	return
+
+label1: // no args: ORIGINALLY either create (NoOpOC) or delete (DeleteOC)
+
+	txn OnCompletion
+	intc_0 // 0
+	==
+	bnz label10 // when no args an a NoOpOC - try to create app
+
+	txn OnCompletion
+	pushint 5
+	==
+	bnz label11
+
+	// Adding the case of OptInOC (with a very simple check and no return value)
+	txn OnCompletion
+
+	pushint 1
+	==
+	assert
+
+	pushint 1
+	return
+
+label11:
+
+	txn Sender
+	global CreatorAddress
+	==
+	assert
+
+	intc_1 // 1
+	return
+
+label10: // app creation
+
+	txn ApplicationID
+	intc_0 // 0
+	==
+	assert
+
+	intc_1 // 1
+	return
+
+// I. optinIfASAandZeroBalance(assetID)
+label22:
+
+	store 13 // 13 -> assetID (for assetReference2 in foreign assets)
+
+	load 13
+	intc_0 // 0
+	==
+	bnz label12 // zero assetID returns immediately (Algos case)
+
+	global CurrentApplicationAddress
+	load 13
+	asset_holding_get AssetBalance // balance in app account of assetID2
+	store 15 // 15 -> assetBalance
+	store 14 // 14 -> appHoldsAssetID? (bool)
+
+	load 15
+	bnz label13 // RETURN when already non-zero balance
+
+	// WHEN ZERO BALANCE --> opt into the ASA
+	itxn_begin
+
+	intc_2 // 4
+	itxn_field TypeEnum // axfer
+	load 13 // assetID
+	itxn_field XferAsset
+	global CurrentApplicationAddress
+	itxn_field AssetReceiver // app receives the asset
+	intc_0 // 0
+	itxn_field AssetAmount // SENDING 0 UNITS of ASA!!!!
+	global MinTxnFee
+	itxn_field Fee // ensure paying min fee
+	itxn_submit
+	b label14 //
+
+label13:
+
+	retsub
+
+label12:
+
+	retsub
+
+label14:
+
+	retsub
+
+// CASES I/II/III/IV := payOrAxferTo(assetIDor0forAlgos, address, amount)
+// call a pay/axfer (IV ==> to the app creator, I => to appAddress) with the given assetAmount
+// label17 fills out itxn #1's fields
+label17: // subroutine called from 4 places with params: (stack->assetID1, creatorAddress, assetAmount)
+
+	// when the referenced asset is algos, this is a pay to the creator of the given assetAmount
+	// when the referenced assit is an ASA, this is an axfer to the creator of the given assetAmount
+	store 24 // 24 -> assetAmount
+	store 23 // 23 -> creatorAddress
+	store 22 // 22 -> assetID1
+
+	load 22
+	intc_0 // 0
+	==
+	bnz label15 // if the assetID1 is 0... we interpret this as Algos !!!
+
+	// inner txn a axfer assetID1@amount
+	intc_2 // 4
+
+	itxn_field TypeEnum // axfer txn type
+	load 22
+	itxn_field XferAsset // trnasfer assetID1
+	load 23
+	itxn_field AssetReceiver // to creatorAddress for IV (or appAddress for I)
+	load 24
+	itxn_field AssetAmount // assetAmount
+	intc_0 // 0
+	itxn_field Fee // fee is payed higher up
+	b label16
+
+label15: // inner txn a pay for the amount (in the case of Algos)
+
+	intc_1 // 1
+	itxn_field TypeEnum // pay txn type
+	load 23 // creatorAddress for IV (or appAddress for I) is the receiver
+	itxn_field Receiver
+	load 24 // assetAmount is the amount
+	itxn_field Amount
+	intc_0 // 0
+	itxn_field Fee // fee is payed higher up
+label16:
+
+	retsub
+
+// I. swap(appID, amount, assetID1, assetID2)
+// I.A) inner pay/axfer to appID.appAddress()
+// I.B) inner app call to appID with args: {"SWAP", 0}, foreign assets = sorted(assetID1, assetID2)
+label24: // stack->appID, amount, assetID1, assetID2
+
+	store 19 // 19 -> assetID2
+	store 18 // 18 -> assetID1
+	store 17 // 17 -> amount
+	store 16 // 16 -> appID
+
+	load 16
+	app_params_get AppAddress // AFTER: stack->appAddress, appAddressSucceeded?
+	store 21 // 21 -> appAddressSucceeded? (bool)
+	store 20 // 20 -> appAddress
+
+	itxn_begin
+	load 18 		// assetID1
+	load 20			// appAddress
+	load 17			// amount
+	callsub label17 // payOrAxferTo(assetID1, appAddress, assetAmount)
+	// summary thus far: thisAppAddress --- assetAmmount@assetID1 ---> appAddress
+	itxn_next
+
+	pushbytes 0x53574150 // "SWAP"
+	itxn_field ApplicationArgs
+	intc_0 // 0
+	itob
+	itxn_field ApplicationArgs // appArgs = {"SWAP", 0} ASSETS = [assetID1 ???]d
+	intc_0 // 0
+	itxn_field Fee // fee is payed higher up
+	load 16
+	itxn_field ApplicationID // call app w/ appID (its address is appAddress which just received)
+	load 18
+	load 19 // stack->assetID1, assetID2
+	<
+	bnz label18 // if assetID1 < assetID2, then skip next section
+
+	load 19     // stack->assetID2  // must have assetID1 >= assetID2
+	label21:    // stack->min(assetID1, assetID2)
+	itxn_field Assets  // set foreign assets := min(assetID1, assetID2)
+	load 18
+	load 19      // stack->..., assetID1, assetID2
+	>
+	bnz label19  // if assetID1 > assetID2, then skip the next section
+
+	// must have assetID1 <= assetID2
+	load 19      // stack->assetID2 (== max(assetID1, assetID2))
+
+	b label20    // complete the inner app call with assetID2 (same as the foreign asset)
+
+	label19:	 // must have assetID1 > assetID2
+	load 18      // stack->..., assetID1 (== max(assetID1, assetID2)
+	b label20
+
+label18: // MUST HAVE assetID1 < assetID2
+
+	load 18   // stack->assetID1 == min(assetID1, assetID2)
+	b label21
+
+label20: // finish the 2nd inner txn (the app call)
+
+	itxn_field Assets
+	pushint 6
+	itxn_field TypeEnum // inner app call
+	itxn_submit
+	retsub
+
+// I. do85swaps(aref1, aref2, ABI:(appID,amount)) // 170 inner txns total
+label9: // stack->aref1, aref2, ABI:(appID,amount)
+
+	store 9 // 9 -> ABI:(appID,amount)
+	store 8 // 8 -> aref2
+	store 7 // 7 -> aref1
+
+	load 8 // aref2
+	txnas Assets // assetID2
+	callsub label22 // optinIfASAandZeroBalance(assetID2) [one inner txn when not already opted in (~almost due to a bug)]
+
+	load 9 // ABI:(appID,amount)
+	pushint 2
+	extract_uint64 // appID stripped from ABI:(appID,amount)[2:10]
+	store 11 // 11 -> appID
+
+	load 9
+	pushint 10
+	extract_uint64 // amount stripped from ABI:(appID,amount)[10:18]
+	store 12 // 12 -> amount
+
+	intc_0 // 0
+	store 10 // 10 -> 0 (call this i)
+
+label25: // for i=0; i<85; i++
+
+	load 10    // i
+	pushint 85 // i, 85
+	<
+	bz label23 // RETURN when i >= 85
+
+	load 11
+	load 12
+	load 7			// appID, amount, aref1
+	txnas Assets	// appID, amount, assetID1
+	load 8
+	txnas Assets	// appID, amount, assetID1, assetID2
+	callsub label24 // swap(appID, amount, assetID1, assetID2)
+
+	load 10
+	intc_1 // 1
+	+
+	store 10		// i++
+	b label25
+
+label23:
+
+	retsub
+
+label8:
+
+	store 25
+
+	gtxns Amount
+	pushint 100000
+	>=
+	assert
+
+	itxn_begin
+	load 25
+	txnas Assets
+	global CurrentApplicationAddress
+	intc_0 // 0
+	callsub label17
+	itxn_submit
+
+	intc_1 // 1
+	return
+
+label7:
+
+	store 26
+
+	global CurrentApplicationAddress
+	load 26
+	txnas Assets
+	asset_holding_get AssetBalance
+	store 28
+	store 27
+
+	txn Sender
+	global CreatorAddress
+	==
+	assert
+
+	itxn_begin
+	load 26
+	txnas Assets
+	global CreatorAddress
+	load 27
+	callsub label17
+
+	global CreatorAddress
+	itxn_field AssetCloseTo
+	itxn_submit
+
+	intc_1 // 1
+	return
+
+// IV. validate and then call a pay/axfer to the app creator
+label6: // stack-> assetRef1, assetAmount???
+
+	store 30 // 30 -> assetAmount
+	store 29 // 29 -> assetRef1
+
+	txn Sender
+	global CreatorAddress
+	==
+	assert // only the creator can call this
+
+	itxn_begin
+	load 29 // assetRef1
+	txnas Assets // assetRef1 in foreign assets
+	global CreatorAddress
+	load 30 // stack->assetID1, creatorAddress, assetAmount???
+	callsub label17
+	itxn_submit
+
+	intc_1 // 1
+	return
+

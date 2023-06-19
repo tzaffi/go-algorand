@@ -51,11 +51,11 @@ var approvalBoxes string
 //go:embed teal/poap_clear.teal
 var clearBoxes string
 
-//go:embed teal/swap_amm.teal
-var approvalSwap string
+//go:embed teal/swap_outer.teal
+var approvalSwapOuter string
 
 //go:embed teal/swap_clear.teal
-var clearSwap string
+var clearSwapOuter string
 
 // ---- init ----
 
@@ -120,16 +120,16 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 
 	gen.resetPendingApps()
 	gen.appSlice = map[appKind][]*appData{
-		appKindBoxes: make([]*appData, 0),
-		appKindSwap:  make([]*appData, 0),
+		appKindBoxes:     make([]*appData, 0),
+		appKindSwapOuter: make([]*appData, 0),
 	}
 	gen.appMap = map[appKind]map[uint64]*appData{
-		appKindBoxes: make(map[uint64]*appData),
-		appKindSwap:  make(map[uint64]*appData),
+		appKindBoxes:     make(map[uint64]*appData),
+		appKindSwapOuter: make(map[uint64]*appData),
 	}
 	gen.accountAppOptins = map[appKind]map[uint64][]uint64{
-		appKindBoxes: make(map[uint64][]uint64),
-		appKindSwap:  make(map[uint64][]uint64),
+		appKindBoxes:     make(map[uint64][]uint64),
+		appKindSwapOuter: make(map[uint64][]uint64),
 	}
 
 	gen.initializeAccounting()
@@ -181,34 +181,34 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 
 	for _, val := range getAppTxOptions() {
 		switch val {
-		case appSwapCreate:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapCreateFraction)
-		case appSwapUpdate:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapUpdateFraction)
-		case appSwapDelete:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapDeleteFraction)
-		case appSwapOptin:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapOptinFraction)
-		case appSwapCall:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapCallFraction)
-		case appSwapClose:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapCloseFraction)
-		case appSwapClear:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapFraction*config.AppSwapClearFraction)
+		case appSwapOuterCreate:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterCreateFraction)
+		// case appSwapOuterUpdate:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterUpdateFraction)
+		// case appSwapOuterDelete:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterDeleteFraction)
+		case appSwapOuterOptin:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterOptinFraction)
+		case appSwapOuterCall:
+			gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterCallFraction)
+		// case appSwapOuterClose:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterCloseFraction)
+		// case appSwapOuterClear:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppSwapOuterFraction*config.AppSwapOuterClearFraction)
 		case appBoxesCreate:
 			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCreateFraction)
-		case appBoxesUpdate:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesUpdateFraction)
-		case appBoxesDelete:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesDeleteFraction)
+		// case appBoxesUpdate:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesUpdateFraction)
+		// case appBoxesDelete:
+		// 	gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesDeleteFraction)
 		case appBoxesOptin:
 			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesOptinFraction)
 		case appBoxesCall:
 			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCallFraction)
-		case appBoxesClose:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCloseFraction)
-		case appBoxesClear:
-			gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesClearFraction)
+			// case appBoxesClose:
+			// 	gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesCloseFraction)
+			// case appBoxesClear:
+			// 	gen.appTxWeights = append(gen.appTxWeights, config.AppBoxesFraction*config.AppBoxesClearFraction)
 		}
 	}
 	if _, valid, err := validateSumCloseToOne(asPtrSlice(gen.appTxWeights)); err != nil || !valid {
@@ -220,12 +220,12 @@ func MakeGenerator(dbround uint64, bkGenesis bookkeeping.Genesis, config Generat
 
 func (g *generator) resetPendingApps() {
 	g.pendingAppSlice = map[appKind][]*appData{
-		appKindBoxes: make([]*appData, 0),
-		appKindSwap:  make([]*appData, 0),
+		appKindBoxes:     make([]*appData, 0),
+		appKindSwapOuter: make([]*appData, 0),
 	}
 	g.pendingAppMap = map[appKind]map[uint64]*appData{
-		appKindBoxes: make(map[uint64]*appData),
-		appKindSwap:  make(map[uint64]*appData),
+		appKindBoxes:     make(map[uint64]*appData),
+		appKindSwapOuter: make(map[uint64]*appData),
 	}
 }
 
@@ -587,8 +587,8 @@ func getAssetTxOptions() []interface{} {
 
 func getAppTxOptions() []interface{} {
 	return []interface{}{
-		appSwapCreate, appSwapUpdate, appSwapDelete, appSwapOptin, appSwapCall, appSwapClose, appSwapClear,
-		appBoxesCreate, appBoxesUpdate, appBoxesDelete, appBoxesOptin, appBoxesCall, appBoxesClose, appBoxesClear,
+		appSwapOuterCreate, appSwapOuterOptin, appSwapOuterCall,
+		appBoxesCreate, appBoxesOptin, appBoxesCall,
 	}
 }
 
@@ -890,7 +890,7 @@ func (g *generator) generateAssetTxnInternalHint(txType TxTypeID, round uint64, 
 
 func (g *generator) generateAppTxn(round uint64, intra uint64) ([]txn.SignedTxn, []txn.ApplyData, uint64 /* nextIntra */, uint64 /* appID */, error) {
 	start := time.Now()
-	selection, err := weightedSelection(g.appTxWeights, getAppTxOptions(), appSwapCall)
+	selection, err := weightedSelection(g.appTxWeights, getAppTxOptions(), appSwapOuterCall)
 	if err != nil {
 		return nil, nil, intra, 0, err
 	}
@@ -1253,12 +1253,12 @@ func (g *generator) introspectLedgerVsGenerator(roundNumber, intra uint64) (errs
 	// ---- FROM THE GENERATOR: expected created and optins ---- //
 
 	expectedCreated := map[appKind]map[uint64]uint64{
-		appKindBoxes: make(map[uint64]uint64),
-		appKindSwap:  make(map[uint64]uint64),
+		appKindBoxes:     make(map[uint64]uint64),
+		appKindSwapOuter: make(map[uint64]uint64),
 	}
 	expectedOptins := map[appKind]map[uint64]map[uint64]bool{
-		appKindBoxes: make(map[uint64]map[uint64]bool),
-		appKindSwap:  make(map[uint64]map[uint64]bool),
+		appKindBoxes:     make(map[uint64]map[uint64]bool),
+		appKindSwapOuter: make(map[uint64]map[uint64]bool),
 	}
 
 	expectedOptinsCount := 0
@@ -1279,7 +1279,7 @@ func (g *generator) introspectLedgerVsGenerator(roundNumber, intra uint64) (errs
 
 	ledgerCreatablesUnexpected := map[uint64]uint64{}
 	for creatableID, creator := range ledgerCreatableAppsEvidence {
-		if expectedCreated[appKindSwap][creatableID] != creator && expectedCreated[appKindBoxes][creatableID] != creator {
+		if expectedCreated[appKindSwapOuter][creatableID] != creator && expectedCreated[appKindBoxes][creatableID] != creator {
 			ledgerCreatablesUnexpected[creatableID] = creator
 		}
 	}

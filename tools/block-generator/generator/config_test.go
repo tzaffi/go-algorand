@@ -125,7 +125,7 @@ func TestValidateWithDefaults(t *testing.T) {
 				Name:                   "Test",
 				NumGenesisAccounts:     1,
 				AppBoxesCreateFraction: 0.5,
-				AppBoxesUpdateFraction: 0.5,
+				AppBoxesOptinFraction:  0.5,
 				AppBoxesCallFraction:   0.5,
 			},
 			err: fmt.Errorf("app boxes configuration ratios sum should equal 1: sum of params is not close to 1: 1.500000"),
@@ -150,9 +150,9 @@ func TestValidateWithDefaults(t *testing.T) {
 			emptyTxnDistributions := empty(cfg.PaymentTransactionFraction, cfg.AssetTransactionFraction, cfg.AppTransactionFraction)
 			emptyPymtFractions := empty(cfg.PaymentNewAccountFraction, cfg.PaymentFraction)
 			emptyAssetFractions := empty(cfg.AssetCreateFraction, cfg.AssetDestroyFraction, cfg.AssetOptinFraction, cfg.AssetCloseFraction, cfg.AssetXferFraction)
-			emptyAppFractions := empty(cfg.AppSwapFraction, cfg.AppBoxesFraction)
-			emptySwapFraction := empty(cfg.AppSwapCreateFraction, cfg.AppSwapUpdateFraction, cfg.AppSwapDeleteFraction, cfg.AppSwapOptinFraction, cfg.AppSwapCallFraction, cfg.AppSwapCloseFraction, cfg.AppSwapClearFraction)
-			emptyBoxesFraction := empty(cfg.AppBoxesCreateFraction, cfg.AppBoxesUpdateFraction, cfg.AppBoxesDeleteFraction, cfg.AppBoxesOptinFraction, cfg.AppBoxesCallFraction, cfg.AppBoxesCloseFraction, cfg.AppBoxesClearFraction)
+			emptyAppFractions := empty(cfg.AppSwapOuterFraction, cfg.AppBoxesFraction)
+			emptySwapOuterFraction := empty(cfg.AppSwapOuterCreateFraction, cfg.AppSwapOuterOptinFraction, cfg.AppSwapOuterCallFraction)
+			emptyBoxesFraction := empty(cfg.AppBoxesCreateFraction, cfg.AppBoxesOptinFraction, cfg.AppBoxesCallFraction)
 
 			err := cfg.validateWithDefaults(true)
 
@@ -181,11 +181,11 @@ func TestValidateWithDefaults(t *testing.T) {
 				}
 
 				if emptyAppFractions {
-					require.Equal(t, one, cfg.AppSwapFraction)
+					require.Equal(t, one, cfg.AppSwapOuterFraction)
 				}
 
-				if emptySwapFraction {
-					require.Equal(t, one, cfg.AppSwapCreateFraction)
+				if emptySwapOuterFraction {
+					require.Equal(t, one, cfg.AppSwapOuterCreateFraction)
 				}
 
 				if emptyBoxesFraction {
@@ -195,9 +195,9 @@ func TestValidateWithDefaults(t *testing.T) {
 				require.Equal(t, one, sum(cfg.PaymentTransactionFraction, cfg.AssetTransactionFraction, cfg.AppTransactionFraction))
 				require.Equal(t, one, sum(cfg.PaymentNewAccountFraction, cfg.PaymentFraction))
 				require.Equal(t, one, sum(cfg.AssetCreateFraction, cfg.AssetDestroyFraction, cfg.AssetOptinFraction, cfg.AssetCloseFraction, cfg.AssetXferFraction))
-				require.Equal(t, one, sum(cfg.AppSwapFraction, cfg.AppBoxesFraction))
-				require.Equal(t, one, sum(cfg.AppSwapCreateFraction, cfg.AppSwapUpdateFraction, cfg.AppSwapDeleteFraction, cfg.AppSwapOptinFraction, cfg.AppSwapCallFraction, cfg.AppSwapCloseFraction, cfg.AppSwapClearFraction))
-				require.Equal(t, one, sum(cfg.AppBoxesCreateFraction, cfg.AppBoxesUpdateFraction, cfg.AppBoxesDeleteFraction, cfg.AppBoxesOptinFraction, cfg.AppBoxesCallFraction, cfg.AppBoxesCloseFraction, cfg.AppBoxesClearFraction))
+				require.Equal(t, one, sum(cfg.AppSwapOuterFraction, cfg.AppBoxesFraction))
+				require.Equal(t, one, sum(cfg.AppSwapOuterCreateFraction, cfg.AppSwapOuterOptinFraction, cfg.AppSwapOuterCallFraction))
+				require.Equal(t, one, sum(cfg.AppBoxesCreateFraction, cfg.AppBoxesOptinFraction, cfg.AppBoxesCallFraction))
 			} else {
 				require.Equal(t, tc.err.Error(), err.Error())
 			}
@@ -216,10 +216,10 @@ func TestTxTypeParse(t *testing.T) {
 		TxType appTxType
 		err    string
 	}{
-		{"App Swap Create", "app_swap_create", true, appKindSwap, appTxTypeCreate, ""},
-		{"App Boxes Delete", "app_boxes_delete", true, appKindBoxes, appTxTypeDelete, ""},
-		{"not enough _'s", "app_swap", false, 0, 0, "invalid app tx type for parsing"},
-		{"too many _'s", "app_swap_delete_very_much", false, 0, 0, "invalid app tx type for parsing"},
+		{"App Swap Create", "app_swapouter_create", true, appKindSwapOuter, appTxTypeCreate, ""},
+		{"App Boxes Delete", "app_boxes_optin", true, appKindBoxes, appTxTypeOptin, ""},
+		{"not enough _'s", "app_swapouter", false, 0, 0, "invalid app tx type for parsing"},
+		{"too many _'s", "app_swapouter_delete_very_much", false, 0, 0, "invalid app tx type for parsing"},
 		{"Invalid App Kind", "app_invalid_delete", false, 0, 0, "invalid app kind"},
 		{"Invalid Tx Type", "app_boxes_invalid", false, 0, 0, "invalid app tx type"},
 		{"Not An App", "not_an_app", false, 0, 0, "not an app type"},

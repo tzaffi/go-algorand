@@ -48,4 +48,4 @@ pre-git-push:
 post-git-push:
 	mv go.mod _go.mod
 	mv go.sum _go.sum
-	cd ../../ && make tidy && go get github.com/lib/pq
+	cd ../../ && go get github.com/lib/pq && make tidy

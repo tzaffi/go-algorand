@@ -37,26 +37,18 @@ asset_xfer_fraction: 0.849
 asset_delete_fraction: 0
 
 # app choice config
-app_swap_fraction: 0.5
+app_swapouter_fraction: 0.5
 app_boxes_fraction: 0.5
 
 # app_swap config
-app_swap_create_fraction: 0.001
-app_swap_update_fraction: 0.001
-app_swap_delete_fraction: 0
-app_swap_optin_fraction: 0.1
-app_swap_call_fraction: 0.98
-app_swap_close_fraction: 0.005
-app_swap_clear_fraction: 0.003
+app_swapouter_create_fraction: 0.01
+app_swapouter_optin_fraction: 0.01
+app_swapouter_call_fraction: 0.98
 
 # app_boxes config
-app_boxes_create_fraction: 0.001
-app_boxes_update_fraction: 0.001
-app_boxes_delete_fraction: 0
-app_boxes_optin_fraction: 0.1
+app_boxes_create_fraction: 0.01
+app_boxes_optin_fraction: 0.01
 app_boxes_call_fraction: 0.98
-app_boxes_close_fraction: 0.005
-app_boxes_clear_fraction: 0.003
 ```
 
 ## Modes
