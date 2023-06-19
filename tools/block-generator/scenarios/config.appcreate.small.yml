@@ -9,11 +9,11 @@ tx_app_fraction: 0.95
 tx_asset_create_fraction: 1.0
 
 # app kind config
-app_swap_fraction: 0.5
+app_swapouter_fraction: 0.5
 app_boxes_fraction: 0.5
 
-# app swap config
-app_swap_create_fraction: 1.0
+# app swapouter config
+app_swapouter_create_fraction: 1.0
 
 # app boxes config
 app_boxes_create_fraction: 1.0

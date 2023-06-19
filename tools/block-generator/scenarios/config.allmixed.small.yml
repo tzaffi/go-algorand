@@ -19,7 +19,7 @@ asset_delete_fraction: 0
 
 # app kind config
 app_boxes_fraction: 0.5
-app_swap_fraction: 0.5
+app_swapouter_fraction: 0.5
 
 # app boxes config
 app_boxes_create_fraction: 0.01

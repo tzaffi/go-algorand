@@ -53,13 +53,13 @@ const (
 	// into weights across (app kinds) X (app tx type)
 
 	// App Swap TX Distribution / ID's
-	appSwapCreate TxTypeID = "app_swap_create"
-	appSwapUpdate TxTypeID = "app_swap_update"
-	appSwapDelete TxTypeID = "app_swap_delete"
-	appSwapOptin  TxTypeID = "app_swap_optin"
-	appSwapCall   TxTypeID = "app_swap_call"
-	appSwapClose  TxTypeID = "app_swap_close"
-	appSwapClear  TxTypeID = "app_swap_clear"
+	appSwapOuterCreate TxTypeID = "app_swapouter_create"
+	appSwapOuterUpdate TxTypeID = "app_swapouter_update"
+	appSwapOuterDelete TxTypeID = "app_swapouter_delete"
+	appSwapOuterOptin  TxTypeID = "app_swapouter_optin"
+	appSwapOuterCall   TxTypeID = "app_swapouter_call"
+	appSwapOuterClose  TxTypeID = "app_swapouter_close"
+	appSwapOuterClear  TxTypeID = "app_swapouter_clear"
 
 	// App Boxes TX Distribution / ID's
 	appBoxesCreate TxTypeID = "app_boxes_create"
@@ -89,14 +89,14 @@ const (
 type appKind uint8
 
 const (
-	appKindSwap appKind = iota
+	appKindSwapOuter appKind = iota
 	appKindBoxes
 )
 
 func (a appKind) String() string {
 	switch a {
-	case appKindSwap:
-		return "swap"
+	case appKindSwapOuter:
+		return "swapouter"
 	case appKindBoxes:
 		return "boxes"
 	default:
@@ -151,8 +151,8 @@ func parseAppTxType(txType TxTypeID) (isApp bool, kind appKind, tx appTxType, er
 		isApp = true
 		// Setting the app kind
 		switch parts[1] {
-		case "swap":
-			kind = appKindSwap
+		case "swapouter":
+			kind = appKindSwapOuter
 		case "boxes":
 			kind = appKindBoxes
 		default:
@@ -217,17 +217,17 @@ type GenerationConfig struct {
 	AssetCloseFraction   float32 `yaml:"asset_close_fraction"`
 
 	// App kind TX Distribution
-	AppSwapFraction  float32 `yaml:"app_swap_fraction"`
-	AppBoxesFraction float32 `yaml:"app_boxes_fraction"`
+	AppSwapOuterFraction float32 `yaml:"app_swapouter_fraction"`
+	AppBoxesFraction     float32 `yaml:"app_boxes_fraction"`
 
 	// App Swap TX Distribution
-	AppSwapCreateFraction float32 `yaml:"app_swap_create_fraction"`
-	AppSwapUpdateFraction float32 `yaml:"app_swap_update_fraction"`
-	AppSwapDeleteFraction float32 `yaml:"app_swap_delete_fraction"`
-	AppSwapOptinFraction  float32 `yaml:"app_swap_optin_fraction"`
-	AppSwapCallFraction   float32 `yaml:"app_swap_call_fraction"`
-	AppSwapCloseFraction  float32 `yaml:"app_swap_close_fraction"`
-	AppSwapClearFraction  float32 `yaml:"app_swap_clear_fraction"`
+	AppSwapOuterCreateFraction float32 `yaml:"app_swapouter_create_fraction"`
+	AppSwapOuterUpdateFraction float32 `yaml:"app_swapouter_update_fraction"`
+	AppSwapOuterDeleteFraction float32 `yaml:"app_swapouter_delete_fraction"`
+	AppSwapOuterOptinFraction  float32 `yaml:"app_swapouter_optin_fraction"`
+	AppSwapOuterCallFraction   float32 `yaml:"app_swapouter_call_fraction"`
+	AppSwapOuterCloseFraction  float32 `yaml:"app_swapouter_close_fraction"`
+	AppSwapOuterClearFraction  float32 `yaml:"app_swapouter_clear_fraction"`
 
 	// App Boxes TX Distribution
 	AppBoxesCreateFraction float32 `yaml:"app_boxes_create_fraction"`
@@ -300,14 +300,14 @@ func (cfg *GenerationConfig) validateWithDefaults(defaults bool) error {
 		return fmt.Errorf("asset configuration ratios sum should equal 1: %w", eAssetTypes)
 	}
 
-	weights = []*float32{&cfg.AppSwapFraction, &cfg.AppBoxesFraction}
+	weights = []*float32{&cfg.AppSwapOuterFraction, &cfg.AppBoxesFraction}
 	if eAppTypes := sumIsCloseToOneWithDefault(defaults, weights...); eAppTypes != nil {
 		return fmt.Errorf("app configuration ratios sum should equal 1: %w", eAppTypes)
 	}
 
-	weights = []*float32{&cfg.AppSwapCreateFraction, &cfg.AppSwapUpdateFraction, &cfg.AppSwapDeleteFraction, &cfg.AppSwapOptinFraction, &cfg.AppSwapCallFraction, &cfg.AppSwapCloseFraction, &cfg.AppSwapClearFraction}
-	if eAppSwapTypes := sumIsCloseToOneWithDefault(defaults, weights...); eAppSwapTypes != nil {
-		return fmt.Errorf("app swap configuration ratios sum should equal 1: %w", eAppSwapTypes)
+	weights = []*float32{&cfg.AppSwapOuterCreateFraction, &cfg.AppSwapOuterUpdateFraction, &cfg.AppSwapOuterDeleteFraction, &cfg.AppSwapOuterOptinFraction, &cfg.AppSwapOuterCallFraction, &cfg.AppSwapOuterCloseFraction, &cfg.AppSwapOuterClearFraction}
+	if eAppSwapOuterTypes := sumIsCloseToOneWithDefault(defaults, weights...); eAppSwapOuterTypes != nil {
+		return fmt.Errorf("app swap outer configuration ratios sum should equal 1: %w", eAppSwapOuterTypes)
 	}
 
 	weights = []*float32{&cfg.AppBoxesCreateFraction, &cfg.AppBoxesUpdateFraction, &cfg.AppBoxesDeleteFraction, &cfg.AppBoxesOptinFraction, &cfg.AppBoxesCallFraction, &cfg.AppBoxesCloseFraction, &cfg.AppBoxesClearFraction}

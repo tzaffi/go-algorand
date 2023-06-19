@@ -124,8 +124,8 @@ func (g *generator) makeAssetAcceptanceTxn(header txn.Header, index uint64) txn.
 
 func (g *generator) makeAppCreateTxn(kind appKind, sender basics.Address, round, intra uint64, futureAppId uint64) []txn.SignedTxn {
 	var approval, clear string
-	if kind == appKindSwap {
-		approval, clear = approvalSwap, clearSwap
+	if kind == appKindSwapOuter {
+		approval, clear = approvalSwapOuter, clearSwapOuter
 	} else {
 		approval, clear = approvalBoxes, clearBoxes
 	}
