@@ -4,6 +4,7 @@ RESETDB = --reset-db
 REPORTS = ../../tmp/RUN_RUNNER_OUTPUTS
 DURATION = 30s
 VERBOSE = --verbose
+CONDUIT = ./conduit
 
 block-generator: clean-generator
 	go build
@@ -13,7 +14,7 @@ clean-generator:
 
 debug-blockgen:
 	python scripts/run_runner.py \
-	--conduit-binary ./conduit \
+	--conduit-binary $(CONDUIT) \
 	--scenario $(SCENARIO) \
 	--report-directory $(REPORTS) \
 	--keep-alive $(SKIP) \
@@ -27,7 +28,7 @@ clean-docker:
 	docker rm -f generator-test-container
 
 run-runner: block-generator
-	./block-generator runner --conduit-binary ./conduit \
+	./block-generator runner --conduit-binary $(CONDUIT) \
 	--keep-data-dir \
 	--test-duration $(DURATION) \
 	--conduit-log-level trace \
