@@ -5,6 +5,21 @@ REPORTS = ../../tmp/RUN_RUNNER_OUTPUTS
 DURATION = 30s
 VERBOSE = --verbose
 CONDUIT = ./conduit
+PGUSER = algorand
+PGDB = generator_db
+PGCONN = "host=localhost user=$(PGUSER) password=algorand dbname=$(PGDB) port=15432 sslmode=disable"
+
+echo:
+	@echo "SCENARIO 			= $(SCENARIO)"
+	@echo "SKIP 				= $(SKIP)"
+	@echo "RESETDB 			= $(RESETDB)"
+	@echo "REPORTS 			= $(REPORTS)"
+	@echo "DURATION 			= $(DURATION)"
+	@echo "VERBOSE 			= $(VERBOSE)"
+	@echo "CONDUIT 			= $(CONDUIT)"
+	@echo "PGUSER 				= $(PGUSER)"
+	@echo "PGDB 				= $(PGDB)"
+	@echo "PGCONN 				= $(PGCONN)"
 
 block-generator: clean-generator
 	go build
@@ -22,7 +37,7 @@ debug-blockgen:
 	$(RESETDB)
 
 enter-pg:
-	docker exec -it generator-test-container psql -U algorand -d generator_db
+	docker exec -it generator-test-container psql -U $(PGUSER) -d $(PGDB)
 
 clean-docker:
 	docker rm -f generator-test-container
@@ -32,7 +47,7 @@ run-runner: block-generator
 	--keep-data-dir \
 	--test-duration $(DURATION) \
 	--conduit-log-level trace \
-	--postgres-connection-string "host=localhost user=algorand password=algorand dbname=generator_db port=15432 sslmode=disable" \
+	--postgres-connection-string $(PGCONN) \
 	--scenario $(SCENARIO) \
 	$(RESETDB) \
 	$(VERBOSE) \
