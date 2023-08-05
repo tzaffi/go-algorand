@@ -113,12 +113,23 @@ func (g *generator) startRound() error {
 		latestRound = basics.Round(0)
 	}
 
-	latestHeader, err := g.ledger.BlockHdr(latestRound)
-	if err != nil {
-		return fmt.Errorf("could not obtain block header for round %d (latest round %d): %w", g.round, latestRound, err)
+	if g.cycleSize == 0 || g.round <= g.cycleSize {
+		latestHeader, err := g.ledger.BlockHdr(latestRound)
+		if err != nil {
+			return fmt.Errorf("could not obtain block header for round %d (latest round %d): %w", g.round, latestRound, err)
+		}
+
+		g.txnCounter = latestHeader.TxnCounter
+		return nil
 	}
 
-	g.txnCounter = latestHeader.TxnCounter
+	// WLOG in recycling mode:
+	cycleIndex := uint64(latestRound) % g.cycleSize
+	txnDelta := g.blockCycle[0].BlockHeader.TxnCounter
+	if cycleIndex > 0 {
+		txnDelta -= g.blockCycle[cycleIndex-1].BlockHeader.TxnCounter
+	}
+	g.txnCounter += txnDelta
 	return nil
 }
 
@@ -126,6 +137,10 @@ func (g *generator) startRound() error {
 func (g *generator) finishRound() {
 	g.timestamp += consensusTimeMilli
 	g.round++
+
+	if g.cycleSize > 0 && g.round - 1 > g.cycleSize {
+		return
+	}
 
 	// Apply pending assets...
 	g.assets = append(g.assets, g.pendingAssets...)

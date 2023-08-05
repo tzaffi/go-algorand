@@ -38,6 +38,19 @@ import (
 	"github.com/algorand/go-algorand/rpcs"
 )
 
+const (
+	// cycleSize the is the number of blocks and state deltas that the ledger
+	// actually generates. These are stored in a slice and then used to 
+	// replay all rounds subsequet to round # cyclesize.
+	cycleSize = 10
+
+	// sleepRatio is the factor multiplying the number of transactions which
+	// gives the amount of time to sleep when simply looking up pre-computed 
+	// blocks and state deltas.
+	// TODO: this isn't actually used yet and deserves further investigation
+	sleepRatio = 100 * time.Microsecond
+)
+
 // ---- templates ----
 
 //go:embed teal/poap_boxes.teal
@@ -84,6 +97,10 @@ func MakeGenerator(log logging.Logger, dbround uint64, bkGenesis bookkeeping.Gen
 		reportData:                make(map[TxTypeID]TxData),
 		latestData:                make(map[TxTypeID]uint64),
 		roundOffset:               dbround,
+
+		cycleSize: cycleSize,
+		blockCycle: make([]bookkeeping.Block, 0, cycleSize),
+		stateDeltaCycle: make([]ledgercore.StateDelta, 0, cycleSize),
 	}
 
 	gen.feeSink[31] = 1
@@ -289,7 +306,7 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 			round,
 		)
 	}
-	// round must either be nextRound or cachedRound
+	// WLOG round = nextRound or cachedRound
 
 	if round == cachedRound {
 		// one round behind, so write the cached block (if non-empty)
@@ -322,43 +339,48 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 		cert.Block, _, _ = g.ledger.BlockCert(basics.Round(round - g.roundOffset))
 	} else {
 		g.setBlockHeader(&cert)
+		if g.cycleSize == 0 || g.round <= g.cycleSize { // non-recycling mode
+			intra := uint64(0)
+			txGroupsAD := [][]txn.SignedTxnWithAD{}
+			for intra < minTxnsForBlock {
+				txGroupAD, numTxns, err := g.generateTxGroup(g.round, intra)
+				if err != nil {
+					return fmt.Errorf("failed to generate transaction: %w", err)
+				}
+				if len(txGroupAD) == 0 {
+					return fmt.Errorf("failed to generate transaction: no transactions given")
+				}
+				txGroupsAD = append(txGroupsAD, txGroupAD)
 
-		intra := uint64(0)
-		txGroupsAD := [][]txn.SignedTxnWithAD{}
-		for intra < minTxnsForBlock {
-			txGroupAD, numTxns, err := g.generateTxGroup(g.round, intra)
+				intra += numTxns
+			}
+
+			vBlock, ledgerTxnCount, err := g.evaluateBlock(cert.Block.BlockHeader, txGroupsAD, int(intra))
 			if err != nil {
-				return fmt.Errorf("failed to generate transaction: %w", err)
+				return fmt.Errorf("failed to evaluate block: %w", err)
 			}
-			if len(txGroupAD) == 0 {
-				return fmt.Errorf("failed to generate transaction: no transactions given")
+			if ledgerTxnCount != g.txnCounter+intra {
+				return fmt.Errorf("evaluateBlock() txn count mismatches theoretical intra: %d != %d", ledgerTxnCount, g.txnCounter+intra)
 			}
-			txGroupsAD = append(txGroupsAD, txGroupAD)
 
-			intra += numTxns
-		}
-
-		vBlock, ledgerTxnCount, err := g.evaluateBlock(cert.Block.BlockHeader, txGroupsAD, int(intra))
-		if err != nil {
-			return fmt.Errorf("failed to evaluate block: %w", err)
-		}
-		if ledgerTxnCount != g.txnCounter+intra {
-			return fmt.Errorf("evaluateBlock() txn count mismatches theoretical intra: %d != %d", ledgerTxnCount, g.txnCounter+intra)
-		}
-
-		err = g.ledger.AddValidatedBlock(*vBlock, cert.Certificate)
-		if err != nil {
-			return fmt.Errorf("failed to add validated block: %w", err)
-		}
-
-		cert.Block.Payset = vBlock.Block().Payset
-
-		if g.verbose {
-			errs := g.introspectLedgerVsGenerator(g.round, intra)
-			if len(errs) > 0 {
-				return fmt.Errorf("introspectLedgerVsGenerator: %w", errors.Join(errs...))
+			err = g.ledger.AddValidatedBlock(*vBlock, cert.Certificate)
+			if err != nil {
+				return fmt.Errorf("failed to add validated block: %w", err)
 			}
-		}
+
+			cert.Block.Payset = vBlock.Block().Payset
+			// cert.Block.BlockHeader.TxnCounter += intra
+
+			if g.verbose {
+				errs := g.introspectLedgerVsGenerator(g.round, intra)
+				if len(errs) > 0 {
+					return fmt.Errorf("introspectLedgerVsGenerator: %w", errors.Join(errs...))
+				}
+			}
+		} else { // in recycling mode
+			cycleIndex := (g.round - 1) % g.cycleSize
+			cert.Block.Payset = g.blockCycle[cycleIndex].Payset	
+		}		
 	}
 	cert.Block.BlockHeader.Round = basics.Round(round)
 
@@ -369,6 +391,9 @@ func (g *generator) WriteBlock(output io.Writer, round uint64) error {
 		return err
 	}
 
+	if round > 0 && g.cycleSize > 0 && len(g.blockCycle) < int(g.cycleSize) {
+		g.blockCycle = append(g.blockCycle, cert.Block)
+	}
 	g.finishRound()
 	return nil
 }
@@ -450,9 +475,17 @@ func (g *generator) WriteDeltas(output io.Writer, round uint64) error {
 		}
 		return nil
 	}
-	delta, err := g.ledger.GetStateDeltaForRound(basics.Round(round - g.roundOffset))
-	if err != nil {
-		return fmt.Errorf("err getting state delta for round %d: %w", round, err)
+	var delta ledgercore.StateDelta
+	if g.cycleSize == 0 || round <= g.cycleSize {
+		var err error
+		delta, err = g.ledger.GetStateDeltaForRound(basics.Round(round - g.roundOffset))
+		if err != nil {
+			return fmt.Errorf("err getting state delta for round %d: %w", round, err)
+		}
+		g.stateDeltaCycle = append(g.stateDeltaCycle, delta)
+	} else {
+		cycleIndex := (g.round - 1) % g.cycleSize
+		delta = g.stateDeltaCycle[cycleIndex]
 	}
 	// msgp encode deltas
 	data, err := encode(protocol.CodecHandle, delta)
