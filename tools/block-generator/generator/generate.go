@@ -42,7 +42,7 @@ const (
 	// cycleSize the is the number of blocks and state deltas that the ledger
 	// actually generates. These are stored in a slice and then used to 
 	// replay all rounds subsequet to round # cyclesize.
-	cycleSize = 10
+	cycleSize = 5
 
 	// sleepRatio is the factor multiplying the number of transactions which
 	// gives the amount of time to sleep when simply looking up pre-computed 
