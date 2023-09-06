@@ -1,0 +1,6 @@
+// SOURCE: https://algoscan.app/app/1000459750
+#pragma version 8
+
+pushint 1
+return
+
