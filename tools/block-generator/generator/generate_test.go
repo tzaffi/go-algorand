@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"text/template"
 	"time"
 
 	"github.com/algorand/go-algorand/crypto"
@@ -207,28 +208,52 @@ type assembledPrograms struct {
 	boxesClear        []byte
 	swapOuterApproval []byte
 	swapOuterClear    []byte
+	swapInnerApproval []byte
+	swapInnerClear    []byte
 }
 
-func assembleApps(t *testing.T) assembledPrograms {
+func assembleApps(t *testing.T, assetIDs ...uint64) assembledPrograms {
 	t.Helper()
 
-	ap := assembledPrograms{}
+	assembled := make([][]byte, 5)
+	for i, teal := range []string{
+		approvalBoxes,
+		clearBoxes,
+		approvalSwapOuter,
+		clearSwapOuter,
+		clearSwapInner,
+	} {
+		ops, err := logic.AssembleString(teal)
+		require.NoError(t, err, fmt.Sprintf("failed to assemble TEAL @ index %d", i))
+		assembled[i] = ops.Program
+	}
+	programs := assembledPrograms{
+		boxesApproval:     assembled[0],
+		boxesClear:        assembled[1],
+		swapOuterApproval: assembled[2],
+		swapOuterClear:    assembled[3],
+		swapInnerClear:    assembled[4],
+	}
 
-	ops, err := logic.AssembleString(approvalBoxes)
-	ap.boxesApproval = ops.Program
-	require.NoError(t, err)
-	ops, err = logic.AssembleString(clearBoxes)
-	ap.boxesClear = ops.Program
-	require.NoError(t, err)
+	if len(assetIDs) > 0 {
+		require.Len(t, assetIDs, 2)
+		templateIDs := struct {
+			AssetID1 uint64
+			AssetID2 uint64
+		}{assetIDs[0], assetIDs[1]}
 
-	ops, err = logic.AssembleString(approvalSwapOuter)
-	ap.swapOuterApproval = ops.Program
-	require.NoError(t, err)
-	ops, err = logic.AssembleString(clearSwapOuter)
-	ap.swapOuterClear = ops.Program
-	require.NoError(t, err)
+		tmpl, err := template.New("tealSwapInner").Parse(approvalSwapInnerTemplate)
+		require.NoError(t, err)
 
-	return ap
+		var tealBuf bytes.Buffer
+		err = tmpl.Execute(&tealBuf, templateIDs)
+		require.NoError(t, err)
+
+		ops, err := logic.AssembleString(tealBuf.String())
+		require.NoError(t, err)
+		programs.swapInnerApproval = ops.Program
+	}
+	return programs
 }
 
 func TestAppCreate(t *testing.T) {
@@ -243,7 +268,7 @@ func TestAppCreate(t *testing.T) {
 
 	// app call transaction creating appBoxes
 	actual, sgnTxns, appID, err := g.generateAppCallInternal(appBoxesCreate, round, intra, &hint)
-	_ = appID
+	require.Greater(t, appID, uint64(0))
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCreate, actual)
 
@@ -278,7 +303,7 @@ func TestAppCreate(t *testing.T) {
 	// app call transaction creating appSwapOuter
 	intra = 1
 	actual, sgnTxns, appID, err = g.generateAppCallInternal(appSwapOuterCreate, round, intra, &hint)
-	_ = appID
+	require.Greater(t, appID, uint64(0))
 	require.NoError(t, err)
 	require.Equal(t, appSwapOuterCreate, actual)
 
@@ -321,7 +346,7 @@ func TestAppBoxesOptin(t *testing.T) {
 
 	// app call transaction opting into boxes gets replaced by creating appBoxes
 	actual, sgnTxns, appID, err := g.generateAppCallInternal(appBoxesOptin, round, intra, &hint)
-	_ = appID
+	require.Greater(t, appID, uint64(0))
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCreate, actual)
 
@@ -361,7 +386,7 @@ func TestAppBoxesOptin(t *testing.T) {
 	hint.sender = 8
 
 	actual, sgnTxns, appID, err = g.generateAppCallInternal(appBoxesOptin, round, intra, &hint)
-	_ = appID
+	require.Greater(t, appID, uint64(0))
 	require.NoError(t, err)
 	require.Equal(t, appBoxesOptin, actual)
 
@@ -396,8 +421,8 @@ func TestAppBoxesOptin(t *testing.T) {
 
 	require.Contains(t, effects, actual)
 	require.Len(t, effects[actual], 2)
-	require.Equal(t, TxEffect{effectPaymentTxSibling, 1}, effects[actual][0])
-	require.Equal(t, TxEffect{effectInnerTx, 2}, effects[actual][1])
+	require.Equal(t, TxEffect{effectSiblingPay, 1}, effects[actual][0])
+	require.Equal(t, TxEffect{effectInnerPay, 2}, effects[actual][1])
 
 	numTxns, err := g.countAndRecordEffects(actual, time.Now())
 	require.NoError(t, err)
@@ -408,7 +433,7 @@ func TestAppBoxesOptin(t *testing.T) {
 	intra += numTxns
 
 	actual, sgnTxns, appID, err = g.generateAppCallInternal(appBoxesOptin, round, intra, &hint)
-	_ = appID
+	require.Greater(t, appID, uint64(0))
 	require.NoError(t, err)
 	require.Equal(t, appBoxesCall, actual)
 
@@ -433,6 +458,232 @@ func TestAppBoxesOptin(t *testing.T) {
 	require.Len(t, g.pendingAppMap[appKindSwapOuter], 0)
 
 	require.NotContains(t, effects, actual)
+}
+
+// TestAppSwap tests generating app swap transactions by repeatedly attempting
+// to generate an appSwapOuterCall and going on to the next round.
+/*
+1. appSwapOuterCall -> assetCreate			// the first ASA in the swap-pair need exist
+	- Precondition: none
+	- Postcondition: g.assets has length 1 and we extract creator := g.assets[0].creator
+2. appSwapOuterCall -> assetCreate  			// the second ASA in the swap-pair need exist
+- Precondition: we have creator of ASA1
+- Postcondition: g.assets has length 2 and g.multiCoiners has length 1 and contains creator
+
+3. appSwapOuterCall -> appSwapInnerCreate	// the inner swap app need exist
+	- Precondition: we have creator of ASA1 and ASA2
+	- Postcondition:
+	* g.appSlice/appMap[appKindSwapInner] have length 1
+	* the relevant appData.sender is creator
+	* the relevant appData.assets are ASA1 and ASA2
+	* ASA1 and ASA2 are embedded in the program bytes of the create transaction
+		assembled := assembleApps(t, assetID1, assetID2)
+
+4. appSwapOuterCall -> appSwapInnerSpecialPrime // the inner swap app needs to be primed by opting into ASA1/2 and creating the LP token
+  - Precondition: non-empty gen.appData[appKindSwapInner], with ASA1, AS2 := appData.assets[:2]
+  - Postcondition:
+    * g.appData[appKindSwapInner][0].assets == {ASA1, ASA2, ASA_LP}
+	* g.assets == {ASA1, ASA2, ASA_LP}
+	* g.appData[appKindSwapInner][0].assets == {ASA1, ASA2, ASA_LP}
+	* ASA1.appHolders[appID].appID == ASA2.appHolders[appID].appID == appID
+	* ASA_LP.creator == 0 (because not set) but ASA_LP.creator_app == appID
+    * 3 top-level transactions are generated:
+		. index 0: pay txn with 0.4 Algos
+		. index 1: app call to the inner swap app with arg CLT
+		. index 2: app call to the inner swap app with arg OPTIN and ForeignAssets == {ASA1, ASA2}
+    * 2 sibling app call txns are generated
+	* 1 inner acfg effect txn is generated
+	* 2 inner axfer effect txns are generated
+
+5. appSwapOuterCall -> appSwapInnerSpecialLiquidity // the creator needs to provide liquidity to inner swap app
+  - Precondition:
+  	* non-empty gen.appData[appKindSwapInner] with ASA1, ASA2, ASA_LP := appData.assets
+	* (error condition if following violated where asset = g.assets[2]
+		. g.assets[0/1].holders[creator] exist
+		. g.assets[0/1].holders[creator].balance >= 500_000_000
+  - Postcondition:
+    * g.assets[2].holders[creator] >= 500_000_000
+	* 7 top-level transactions are generated:
+		. index 0: axfer/optin from C to self for ASA_LP for amt 0
+		. index 1: axfer from C to appAddr(inner swap app) for ASA1 for amt 4,294.930402
+		. index 2: axfer from C to appAddr(inner swap app) for ASA2 for amt 4,294.930402
+		. index 3: app call to the inner swap app with arg ADDLIQ and ForeignAssets == {ASA1, ASA2, ASA_LP}
+		. index 4: axfer from C to appAddr(inner swap app) for ASA1 for amt 499,995,705.069598
+		. index 5: axfer from C to appAddr(inner swap app) for ASA2 for amt 499,995,705.069598
+		. index 6: app call to the inner swap app with arg ADDLIQ and ForeignAssets == {ASA1, ASA2, ASA_LP}
+	* 4 sibling axfer txns are generated
+	* 2 sibling app call txns are generated
+	* 2 inner axfer effect txns are generated
+
+6. appSwapOuterCall -> appSwapOuterCreate	// the outer swap app need exist
+  - Precondition:
+	* g.assets[0/1/2].holders[creator] >= 500_000_000
+	* non-empty gen.appData[appKindSwapInner] with ASA1, ASA2, ASA_LP := appData.assets
+  - Postcondition:
+	* g.appSlice/appMap[appKindSwapOuter] have length 1
+
+7. appSwapOuterCall -> appSwapOuterSpecialPrime
+	// the outer swap app needs to be primed by opting into ASA1/2
+	// and it also needs to have a good chunk of ASA1
+  - Precondition: go.appMap[appKindSwapOuter] is non-empty
+  - Postcondition:
+    * g.appData[appKindSwapOuter][0].assets == {ASA1, ASA2}
+	* ASA1.appHolders[appID].appID == appID
+	*
+	* 5 top-level transactions are generated:
+		. index 0: pay txn with 0.1 Algos
+		. index 1: app call to the outer swap app with arg 0xaa6d419d and ForeignAssets == {ASA1}
+		. index 2: pay txn with 0.1 Algos
+		. index 3: app call to the outer swap app with arg 0xaa6d419d and ForeignAssets == {ASA2}
+		. index 4: axfer from C to appAddr(outer swap app) ASA1 @ 1_000_000 units
+	* 1 sibling pay txn is generated
+	* 2 sibling app call txns are generated
+	* 1 sibling axfer txn is generated
+	* 0 inner txns are generated
+
+8. appSwapOuterCall -> appSwapOuterCall			// FINALLY!!!!
+  - Precondition: g.appMap[appKindSwapOuter] such that ASA1 amount > 1_000 exists
+  - Postcondition: None... this is a stable condition
+
+*/
+func TestAppSwap(t *testing.T) {
+	partitiontest.PartitionTest(t)
+	t.Parallel()
+
+	g := makePrivateGenerator(t, 0, bookkeeping.Genesis{})
+	txnCounter := g.txnCounter
+	round, intra := uint64(1337), uint64(0)
+	mockAdvance := func(numTxns uint64) {
+		g.finishRound()
+		g.startRound()
+		g.txnCounter += numTxns
+		round++
+	}
+
+	// We expect the
+	// following evolution in the _actual_ transactions generated when starting
+	// with a completely empty generator state.
+	// "Precondition" is what the call expects
+	// "Postcondition" is the expected effect after a gen.finishRound() call:
+
+	// creator := uint64(7)
+	// hint := appData{sender: creator}
+
+	/*
+		1. appSwapOuterCall -> assetCreate			// the first ASA in the swap-pair need exist
+		  - Precondition: none
+		  - Postcondition: g.assets has length 1 and we extract creator := g.assets[0].creator
+	*/
+	numTxns := uint64(1)
+	txnCounter += numTxns
+	assetID1 := txnCounter
+	actual, sgnTxns, objID, err := g.generateAppCallInternal(appSwapOuterCall, round, intra, nil)
+	require.Equal(t, assetCreate, actual)
+	require.Len(t, sgnTxns, 1)
+	axfer1_1 := sgnTxns[0].Txn
+	require.Equal(t, protocol.AssetConfigTx, axfer1_1.Type)
+	require.Equal(t, assetID1, objID)
+	require.NoError(t, err)
+	assetInfo1 := g.pendingAssets[0]
+	require.Len(t, g.pendingMultiCoiners, 0)
+
+	mockAdvance(numTxns)
+	require.Equal(t, txnCounter, g.txnCounter) // sanity check
+	require.Len(t, g.assets, 1)
+	require.Equal(t, assetInfo1, g.assets[0])
+	require.Equal(t, assetID1, assetInfo1.assetID)
+	require.Len(t, g.multiCoiners, 0)
+
+	// creator should remain constant for the rest of this test even though no hint is supplied
+	creator := assetInfo1.creator
+	/*
+		2. appSwapOuterCall -> assetCreate  			// the second ASA in the swap-pair need exist
+		- Precondition: we have creator of ASA1
+		- Postcondition: g.assets has length 2 and g.multiCoiners has length 1 and contains creator
+	*/
+	numTxns = 1
+	txnCounter += numTxns
+	assetID2 := txnCounter
+	actual, sgnTxns, objID, err = g.generateAppCallInternal(appSwapOuterCall, round, intra, nil)
+	require.Equal(t, assetCreate, actual)
+	require.Len(t, sgnTxns, 1)
+	axfer2_2 := sgnTxns[0].Txn
+	require.Equal(t, protocol.AssetConfigTx, axfer2_2.Type)
+	require.Equal(t, assetID2, objID)
+	require.NoError(t, err)
+	assetInfo2 := g.pendingAssets[1]
+	pendingMultiCoins := g.pendingMultiCoiners[creator]
+	require.Len(t, pendingMultiCoins, 2)
+	require.Equal(t, assetInfo1, pendingMultiCoins[0])
+	require.Equal(t, assetInfo2, pendingMultiCoins[1])
+
+	mockAdvance(numTxns) // sanity check
+	require.Equal(t, txnCounter, g.txnCounter)
+	require.Len(t, g.assets, 2)
+	require.Equal(t, creator, assetInfo2.creator)
+	require.Equal(t, assetID2, assetInfo2.assetID)
+	require.Len(t, g.multiCoiners, 1)
+	multiCoins := g.multiCoiners[creator]
+	require.Equal(t, pendingMultiCoins, multiCoins)
+	/*
+		3. appSwapOuterCall -> appSwapInnerCreate	// the inner swap app need exist
+		  - Precondition: we have creator of ASA1 and ASA2
+		  - Postcondition:
+		    * g.appSlice/appMap[appKindSwapInner] have length 1
+		    * the relevant appData.sender is creator
+		    * the relevant appData.assets are ASA1 and ASA2
+		    * ASA1 and ASA2 are embedded in the program bytes of the create transaction
+				assembled := assembleApps(t, assetID1, assetID2)
+	*/
+	assembled := assembleApps(t, assetID1, assetID2)
+
+	numTxns = 1
+	txnCounter += uint64(numTxns)
+	innerAppID := txnCounter
+	actual, sgnTxns, objID, err = g.generateAppCallInternal(appSwapOuterCall, round, intra, nil)
+	require.Equal(t, appSwapInnerCreate, actual)
+	require.Len(t, sgnTxns, 1)
+	swapInnerCreate_3 := sgnTxns[0].Txn
+	require.Equal(t, protocol.ApplicationCallTx, swapInnerCreate_3.Type)
+	require.Equal(t, transactions.NoOpOC, swapInnerCreate_3.ApplicationCallTxnFields.OnCompletion)
+	require.Equal(t, assembled.swapInnerApproval, swapInnerCreate_3.ApplicationCallTxnFields.ApprovalProgram)
+	require.Equal(t, assembled.swapInnerClear, swapInnerCreate_3.ApplicationCallTxnFields.ClearStateProgram)
+	require.Equal(t, innerAppID, objID)
+	require.NoError(t, err)
+
+	mockAdvance(numTxns)
+	require.Equal(t, txnCounter, g.txnCounter) // sanity check
+	require.Len(t, g.appSlice[appKindSwapInner], 1)
+	require.Len(t, g.appMap[appKindSwapInner], 1)
+	innerAppInfo := g.appMap[appKindSwapInner][innerAppID]
+	require.Equal(t, innerAppInfo, g.appSlice[appKindSwapInner][0])
+	require.Equal(t, creator, innerAppInfo.sender)
+	require.Len(t, innerAppInfo.assets, 2)
+	require.Equal(t, assetInfo1, innerAppInfo.assets[0])
+	require.Equal(t, assetInfo2, innerAppInfo.assets[1])
+	/*
+		// 4. appSwapOuterCall -> appSwapOuterCreate
+		numTxns = 3
+		txnCounter += uint64(numTxns)
+		actual, sgnTxns, objID, err = g.generateAppCallInternal(appSwapOuterCall, round, intra, &hint)
+		require.Equal(t, appSwapOuterCreate, actual)
+		require.Len(t, sgnTxns, 1)
+		swapInnerCreate = sgnTxns[0].Txn
+		require.Equal(t, protocol.ApplicationCallTx, swapInnerCreate.Type)
+		require.Equal(t, transactions.NoOpOC, swapInnerCreate.ApplicationCallTxnFields.OnCompletion)
+		require.Equal(t, assembled.swapInnerApproval, swapInnerCreate.ApplicationCallTxnFields.ApprovalProgram)
+		require.Equal(t, assembled.swapInnerClear, swapInnerCreate.ApplicationCallTxnFields.ClearStateProgram)
+		require.Equal(t, txnCounter, objID)
+		// assert also that the opted in assets for objID are assetID1 and assetID2
+		require.NoError(t, err)
+
+		mockAdvance(numTxns)
+		// sanity check
+		require.Equal(t, txnCounter, g.txnCounter)
+
+		// 5. appSwapOuterCall -> appSwapOuterOptin
+		// 6. appSwapOuterCall -> appSwapOuterCall		// Finally after 6 rounds of trying!
+	*/
 }
 
 func TestWriteRoundZero(t *testing.T) {
@@ -726,11 +977,11 @@ func TestRecordAppConsequences(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, uint64(1), data.GenerationCount)
 
-	data, ok = g.reportData[effectPaymentTxSibling]
+	data, ok = g.reportData[effectSiblingPay]
 	require.True(t, ok)
 	require.Equal(t, uint64(1), data.GenerationCount)
 
-	data, ok = g.reportData[effectInnerTx]
+	data, ok = g.reportData[effectInnerPay]
 	require.True(t, ok)
 	require.Equal(t, uint64(2), data.GenerationCount)
 }

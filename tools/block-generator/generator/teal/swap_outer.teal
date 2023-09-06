@@ -15,7 +15,7 @@ bnz label2 // CASE I. Monster Swapper. 85 triplets of asset/pay from sender to "
 txna ApplicationArgs 0
 pushbytes 0xaa6d419d // 0xaa6d419d
 ==
-bnz label3 // CASE II. opting into ASA [BUT NOT THE APP] denoted by first byte of arg1
+bnz label3 // CASE II. opting into ASA [BUT NOT THIS APP OR ITS C2C] denoted by first byte of arg1
 
 txna ApplicationArgs 0
 pushbytes 0x92e297a1 // 0x92e297a1
@@ -229,7 +229,7 @@ label12:
 
 label14:
 
-	// TODO: I believe we should return at this point
+	// TODO: I believe we should `return` at this point (as oposed to `retsub`)
 	// or ensure that we never get to this branch. That's because
 	// continuing on to the rest of the logic will result in 256
 	// inner txns - a violation of the 255 max.

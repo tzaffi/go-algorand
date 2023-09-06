@@ -52,7 +52,7 @@ type generator struct {
 	numAccounts uint64
 
 	// Block stuff
-	round uint64
+	round         uint64
 	txnCounter    uint64
 	prevBlockHash string
 	timestamp     int64
@@ -80,6 +80,11 @@ type generator struct {
 	// pendingAssets is used to hold newly created assets so that they are not used before
 	// being created.
 	pendingAssets []*assetData
+
+	// multiCoiners provides a map of account indices which have created
+	// 2 or more assets mapping to the assets they have created.
+	multiCoiners        map[uint64][]*assetData
+	pendingMultiCoiners map[uint64][]*assetData
 
 	// pendingAppMap provides a live mapping from appID to appData for each appKind
 	// for the current round
@@ -134,16 +139,17 @@ type assetData struct {
 	holders map[uint64]*assetHolding
 }
 
+type assetHolding struct {
+	acctIndex uint64
+	balance   uint64
+}
+
 type appData struct {
 	appID  uint64
 	sender uint64
 	kind   appKind
 	optins map[uint64]bool
-}
-
-type assetHolding struct {
-	acctIndex uint64
-	balance   uint64
+	assets []*assetData
 }
 
 // Report is the generation report.

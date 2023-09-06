@@ -27,6 +27,11 @@ import (
 var DaemonCmd *cobra.Command
 
 func init() {
+	// TODO: add random to the generator now that rand.Seed() is deperecated
+	// S.O.: https://stackoverflow.com/questions/75597325/rand-seedseed-is-deprecated-how-to-use-newrandnewseed
+	// r := rand.New(rand.NewSource(12345))
+	// fmt.Println(r.Uint64())
+	// fmt.Println(r.Uint64())
 	rand.Seed(12345)
 
 	var configFile string

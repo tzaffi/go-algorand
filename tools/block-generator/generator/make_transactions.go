@@ -17,7 +17,10 @@
 package generator
 
 import (
+	"bytes"
 	"encoding/binary"
+	"fmt"
+	"text/template"
 
 	"github.com/algorand/go-algorand/crypto"
 	"github.com/algorand/go-algorand/data/basics"
@@ -81,7 +84,9 @@ func (g *generator) makeAssetCreateTxn(header txn.Header, total uint64, defaultF
 		Header: header,
 		AssetConfigTxnFields: txn.AssetConfigTxnFields{
 			AssetParams: basics.AssetParams{
-				Total:         total,
+				Total: total,
+				// does this still work?
+				Decimals:      6,
 				DefaultFrozen: defaultFrozen,
 				AssetName:     assetName,
 				Manager:       header.Sender,
@@ -122,12 +127,37 @@ func (g *generator) makeAssetAcceptanceTxn(header txn.Header, index uint64) txn.
 
 // ---- application transactions ----
 
-func (g *generator) makeAppCreateTxn(kind appKind, sender basics.Address, round, intra uint64, futureAppId uint64) []txn.SignedTxn {
+func (g *generator) makeAppCreateTxn(kind appKind, sender basics.Address, round, intra uint64, futureAppId uint64, assetIDs ...uint64) ([]txn.SignedTxn, error) {
 	var approval, clear string
-	if kind == appKindSwapOuter {
+	switch kind {
+	case appKindSwapOuter:
 		approval, clear = approvalSwapOuter, clearSwapOuter
-	} else {
+	case appKindSwapInner:
+		var approvalTmpl string
+		approvalTmpl, clear = approvalSwapInnerTemplate, clearSwapInner
+		if len(assetIDs) != 2 {
+			return nil, fmt.Errorf("swap inner app requires two asset IDs but received %d", len(assetIDs))
+		}
+		if assetIDs[0] >= assetIDs[1] {
+			return nil, fmt.Errorf("swap inner app requires asset IDs in ascending order but received %+v", assetIDs)
+		}
+		tmpl, err := template.New("tealSwapInner").Parse(approvalTmpl)
+		if err != nil {
+			return nil, err
+		}
+		var approvalBuf bytes.Buffer
+		err = tmpl.Execute(&approvalBuf, struct {
+			AssetID1 uint64
+			AssetID2 uint64
+		}{assetIDs[0], assetIDs[1]})
+		if err != nil {
+			return nil, err
+		}
+		approval = approvalBuf.String()
+	case appKindBoxes:
 		approval, clear = approvalBoxes, clearBoxes
+	default:
+		panic(fmt.Sprintf("unknown app kind: %s", kind))
 	}
 
 	createTxn := g.makeTestTxn(sender, round, intra)
@@ -153,7 +183,7 @@ func (g *generator) makeAppCreateTxn(kind appKind, sender basics.Address, round,
 	// TODO: should check for min balance
 	g.balances[senderIndex] -= createTxFee
 	if kind != appKindBoxes {
-		return txntest.Group(&createTxn)
+		return txntest.Group(&createTxn), nil
 	}
 
 	// also group in a pay txn to fund the app
@@ -169,7 +199,7 @@ func (g *generator) makeAppCreateTxn(kind appKind, sender basics.Address, round,
 	// TODO: should check for min balance}
 	g.balances[senderIndex] -= (pstFee + pstAmt)
 
-	return txntest.Group(&createTxn, &paySibTxn)
+	return txntest.Group(&createTxn, &paySibTxn), nil
 }
 
 // makeAppOptinTxn currently only works for the boxes app

@@ -61,6 +61,8 @@ const (
 	// appSwapOuterClose  TxTypeID = "app_swapouter_close"
 	// appSwapOuterClear  TxTypeID = "app_swapouter_clear"
 
+	appSwapInnerCreate TxTypeID = "app_swapinner_create"
+
 	// App Boxes TX Distribution / ID's
 	appBoxesCreate TxTypeID = "app_boxes_create"
 	// appBoxesUpdate TxTypeID = "app_boxes_update"
@@ -71,8 +73,9 @@ const (
 	// appBoxesClear  TxTypeID = "app_boxes_clear"
 
 	// Special TxTypeID's recording effects of higher level transactions
-	effectPaymentTxSibling TxTypeID = "effect_payment_sibling"
-	effectInnerTx          TxTypeID = "effect_inner_tx"
+	effectSiblingPay TxTypeID = "effect_sibling_pay"
+	effectInnerPay   TxTypeID = "effect_inner_pay"
+	effectInnerAxfer TxTypeID = "effect_inner_axfer"
 
 	// Defaults
 	defaultGenesisAccountsCount         uint64 = 1000
@@ -90,6 +93,7 @@ type appKind uint8
 
 const (
 	appKindSwapOuter appKind = iota
+	appKindSwapInner
 	appKindBoxes
 )
 
@@ -97,6 +101,8 @@ func (a appKind) String() string {
 	switch a {
 	case appKindSwapOuter:
 		return "swapouter"
+	case appKindSwapInner:
+		return "swapinner"
 	case appKindBoxes:
 		return "boxes"
 	default:
@@ -188,6 +194,9 @@ func parseAppTxType(txType TxTypeID) (isApp bool, kind appKind, tx appTxType, er
 }
 
 func getAppTxType(kind appKind, appType appTxType) TxTypeID {
+	// TODO: an improvement would return an error in the case that
+	// the created TxTypeID is non-sensical
+	// Even better, make TxTypeID into an enum.
 	return TxTypeID(fmt.Sprintf("app_%s_%s", kind, appType))
 }
 
